@@ -38,14 +38,16 @@
 }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; background: var(--bg); color: var(--ink); }
+html { background: var(--bg); }
+html, body { margin: 0; color: var(--ink); }
 /* the sun in the top right corner */
+/* sits behind everything (z-index -1) and scrolls away with the page */
+body { position: relative; overflow-x: clip; }
 body::before {
-  content: ''; position: fixed; z-index: 0; pointer-events: none;
+  content: ''; position: absolute; z-index: -1; pointer-events: none;
   top: -150px; right: -130px; width: 360px; height: 360px; border-radius: 50%;
   background: radial-gradient(circle at 50% 50%, var(--sun3) 0 85px, var(--sun2) 86px 130px, var(--sun1) 131px 180px);
 }
-#app { position: relative; z-index: 1; }
 body {
   font: 16px/1.45 'Nunito', system-ui, -apple-system, sans-serif;
   -webkit-text-size-adjust: 100%;
