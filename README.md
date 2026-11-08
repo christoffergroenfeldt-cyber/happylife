@@ -16,7 +16,9 @@ Danish, English and French – switch on the login screen or under **Family → 
 | **Points** | A parent can give a task points (0–1000). Whoever ticks it off earns them; undo takes them back. Each child sees their own ⭐ counter on Home and Tasks, parents see every child's, with this week's points too. Points are kept even if the task is later deleted. |
 | **Role tasks** | E.g. a husband-only task – invisible to the wife and children. |
 | **Moments** | "When did I last …" – each with its own reminder interval in days. When the days have passed it appears on Home under *Time for something special* with an idea. Defaults on a new family: flowers + surprise (husband), surprise (wife), out together + trip together (both). |
-| **Calendar** | Vacations, anniversaries, birthdays. Yearly events show how many years; each shows on Home a chosen number of days before. |
+| **Calendar** | Vacations, anniversaries, birthdays – typed in, or brought in from the parents' iPhone calendars with a Shortcut (see below). Yearly events show how many years; each shows on Home a chosen number of days before. |
+| **Event tasks** | Parents tap an event and add tasks with quick suggestions – e.g. *Buy a present* 7 days before Anna's birthday, *Book a restaurant* 14 days before the anniversary. They repeat every year for yearly events, show on Home 14 days before they're due, and work with reminders and points like other tasks. A child can be given an event task without seeing the event. |
+| **Login codes** | Signed in on one device? Family → *Sign in on another device* makes an 8-character code (valid 10 minutes, works once). On the new device: *Have a login code…?* – no email needed. |
 | **Family** | Invite code, members and roles. Only the admin (whoever created the family) can change roles, so a child can't make themself "wife". |
 
 Privacy is enforced in the database (Row Level Security), not just hidden in the app.
@@ -69,6 +71,45 @@ only works when the app is added to the Home Screen and opened from there (iOS 1
 To make new VAPID keys: `npx web-push generate-vapid-keys`, put the public key in
 `config.js` and both keys in the secrets.
 
+### Calendar from iPhone (Shortcut)
+Each parent can bring birthdays and anniversaries in from their iPhone calendars. In the
+app: **Family → Calendar from iPhone → Get started** gives a personal sync code.
+Only events from calendars switched on under Family are saved; for all other calendars only
+the calendar *name* is kept (so it can be switched on) – their event titles are discarded
+on arrival. Calendars with names like *Birthdays / Fødselsdage* are on (and yearly) by default.
+Imported events are visible to the parents only, until you change *Visible to*.
+
+Build the Shortcut once in **Shortcuts → +** (then share it with the other parent):
+
+1. **Text** – paste your sync code. **Set Variable** `Token`.
+2. **Find Calendar Events** – *All Calendar Events*, **Start Date** *is in the next* **365 days**, *Limit* off.
+3. **Text** – *Calendar Events* → **Title**. **Set Variable** `Titles`.
+4. **Text** – *Calendar Events* → **Start Date**, **Date Format: ISO 8601** with time. **Set Variable** `Starts`.
+5. **Text** – *Calendar Events* → **End Date**, same format. **Set Variable** `Ends`.
+6. **Text** – *Calendar Events* → **Is All Day**. **Set Variable** `AllDay`.
+7. **Text** – *Calendar Events* → **Calendar**. **Set Variable** `Calendars`.
+8. **Get Contents of URL**
+   - URL `https://ddafsqnpbplblfjovqpf.supabase.co/rest/v1/rpc/sync_calendar`
+   - Method **POST**, Header `apikey` = the anon key from `config.js`
+   - Request Body **JSON**, six Text fields: `p_token` = *Token*, `p_titles` = *Titles*,
+     `p_starts` = *Starts*, `p_ends` = *Ends*, `p_allday` = *AllDay*, `p_calendars` = *Calendars*
+9. **Show Notification** – *Contents of URL*. Name the shortcut **Happy Life Sync**.
+
+Run it once (allow calendar access, *Always Allow* supabase.co). The notification says e.g.
+*Happy Life: 14 begivenheder fra 1 af 5 kalendere.* Then pick calendars in the app under
+Family and run it again. Add a daily **Personal Automation** (e.g. 07:00 → Run Shortcut
+*Happy Life Sync*) to keep it up to date; events removed from the phone disappear (with
+their tasks) at the next sync. A calendar that sends nothing keeps its events.
+
+To share it: in the shortcut's settings → **Import Questions → Add Question** for the Text in
+step 1 (*"Paste your sync code from Happy Life"*), then **Share → Copy iCloud Link**.
+
+If something is wrong (e.g. a title with a line break), nothing is saved and the notification
+says why. Also switch on **Settings → Apps → Shortcuts → Advanced → Allow Sharing Large
+Amounts of Data**.
+
+> Danish iPhone: *Find kalenderbegivenheder*, *Hent indholdet af URL*, *Er heldags*. Ja/Nej works.
+
 ### 5. The family
 1. Open the link in Safari → enter your email → enter the code from the email →
    **Create family** → pick your roles (e.g. father + husband).
@@ -92,6 +133,7 @@ code (e.g. a parent's address with `+` – `mum+anna@gmail.com` – on Gmail).
 | `sw.js`, `manifest.json`, icons | Home-screen app, offline shell, showing notifications |
 | `supabase/functions/remind/index.ts` | Edge Function that sends task reminders |
 | `cron.sql` | Runs the reminder function every 5 minutes |
+| `supabase/functions/login-code/index.ts` | Edge Function that redeems login codes |
 | `tests/remind.test.mjs` | Tests for the reminder rules: `node --test tests/remind.test.mjs` |
 
 ## Ideas for later
