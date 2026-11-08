@@ -12,7 +12,7 @@ const PARENT = ['mother', 'father'];
 const S = {
   session: null, me: null, family: null, members: [],
   plans: [], tasks: [], done: [], takes: [], trackers: [], entries: [], events: [],
-  tab: 'home', authMode: 'in', setupMode: 'create', ideaShift: {},
+  tab: 'home', authStep: 'email', authEmail: '', setupMode: 'create', ideaShift: {},
 };
 
 const app = document.getElementById('app');
@@ -158,31 +158,58 @@ function langPicker() {
 
 // ------------------------------------------------------------ auth + setup
 
+// Sign in with a one-time code sent by email (no passwords) – same flow as the Friends app.
+// New email addresses get an account automatically.
 function renderAuth() {
-  const up = S.authMode === 'up';
+  const codeStep = S.authStep === 'code';
   app.innerHTML = `
     <div class="center">
       <div class="brand"><div class="logo">💛</div><h1>${t('appName')}</h1><p>${esc(t('tagline'))}</p></div>
-      <form class="card" id="authForm">
-        <label>${t('email')}<input name="email" type="email" autocomplete="email" required></label>
-        <label>${t('password')}<input name="password" type="password" minlength="6"
-          autocomplete="${up ? 'new-password' : 'current-password'}" required></label>
-        <button class="primary" type="submit">${up ? t('signUp') : t('signIn')}</button>
-        <button class="link" type="button" data-act="authMode">${up ? t('haveAccount') : t('noAccount')}</button>
-      </form>
+      ${codeStep ? `
+      <form class="card" id="codeForm">
+        <p class="hint">${esc(t('codeSent', { email: S.authEmail }))}</p>
+        <label>${t('code')}<input name="code" class="otp" type="text" inputmode="numeric"
+          autocomplete="one-time-code" maxlength="10" required></label>
+        <button class="primary" type="submit">${t('signIn')}</button>
+        <button class="link" type="button" data-act="otherEmail">${t('otherEmail')}</button>
+      </form>` : `
+      <form class="card" id="emailForm">
+        <label>${t('email')}<input name="email" type="email" inputmode="email" autocomplete="email"
+          value="${esc(S.authEmail)}" required></label>
+        <button class="primary" type="submit">${t('sendCode')}</button>
+        <p class="hint">${esc(t('noPassword'))}</p>
+      </form>`}
       ${langPicker()}
     </div>`;
-  document.getElementById('authForm').onsubmit = async (e) => {
-    e.preventDefault();
-    const f = new FormData(e.target);
-    const creds = { email: f.get('email').trim(), password: f.get('password') };
-    if (up) {
-      const data = await run(sb.auth.signUp(creds));
-      if (!data.session) toast(t('checkEmail'));
-    } else {
-      await run(sb.auth.signInWithPassword(creds));
-    }
-  };
+
+  const busy = (e, on) => { if (e.submitter) e.submitter.disabled = on; };
+  if (codeStep) {
+    const form = document.getElementById('codeForm');
+    form.elements.code.focus();
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      busy(e, true);
+      const token = form.elements.code.value.replace(/\s/g, '');
+      const { error } = await sb.auth.verifyOtp({ email: S.authEmail, token, type: 'email' });
+      if (error) {
+        console.error(error);
+        toast(/expired|invalid/i.test(error.message) ? t('codeWrong') : `${t('error')}: ${error.message}`, true);
+        busy(e, false);
+      }
+      // on success onAuthStateChange loads the family and renders
+    };
+  } else {
+    document.getElementById('emailForm').onsubmit = async (e) => {
+      e.preventDefault();
+      busy(e, true);
+      S.authEmail = new FormData(e.target).get('email').trim().toLowerCase();
+      try {
+        await run(sb.auth.signInWithOtp({ email: S.authEmail, options: { shouldCreateUser: true } }));
+        S.authStep = 'code';
+        render();
+      } catch { busy(e, false); }
+    };
+  }
 }
 
 function renderSetup() {
@@ -653,7 +680,7 @@ const byId = (list, id, key = 'id') => list.find((x) => x[key] === id);
 const ACTIONS = {
   tab: (id) => { S.tab = id; render(); window.scrollTo(0, 0); },
   lang: (id) => { store('hl-lang', id); setLang(id); render(); },
-  authMode: () => { S.authMode = S.authMode === 'in' ? 'up' : 'in'; render(); },
+  otherEmail: () => { S.authStep = 'email'; render(); },
   setupMode: (id) => { S.setupMode = id; render(); },
   signOut: async () => { await sb.auth.signOut(); },
   close: () => closeDialog(),
@@ -755,6 +782,7 @@ document.addEventListener('visibilitychange', () => {
     if (event === 'INITIAL_SESSION') return;
     S.session = session;
     S.me = null;
+    S.authStep = 'email';
     if (session) { try { await loadAll(); } catch { /* shown */ } }
     render();
   });

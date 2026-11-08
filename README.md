@@ -25,8 +25,14 @@ Privacy is enforced in the database (Row Level Security), not just hidden in the
 ### 1. Supabase
 1. Create a free project at <https://supabase.com> (region: Frankfurt/EU).
 2. **SQL Editor → New query** → paste all of `schema.sql` → **Run**.
-3. **Authentication → Providers → Email**: keep enabled. For the family it's easiest to turn
-   **Confirm email** off; otherwise everyone must click a link in an email after signing up.
+3. **Sign-in emails** – the app signs people in with a one-time code sent by email (no
+   passwords; same as the Friends app). New addresses get an account automatically.
+   - **Authentication → Emails → Templates**: in both **Magic Link** and **Confirm signup**,
+     make sure the body contains the code, e.g.
+     `<h2>Your Happy Life code</h2><p>Enter this code in the app: <b>{{ .Token }}</b></p>`
+   - **Authentication → Emails → SMTP Settings**: Supabase's built-in email only sends to
+     members of your Supabase team, so add your own SMTP (the same settings as the Friends
+     project work): Gmail with an app password (`smtp.gmail.com`, port `587`) or Brevo.
 4. **Authentication → URL Configuration**: set **Site URL** to
    `https://christoffergroenfeldt-cyber.github.io/happylife/`.
 5. **Project Settings → API**: copy the **Project URL** and the **anon public** key.
@@ -40,13 +46,14 @@ Repo **Settings → Pages** → Source: *Deploy from a branch* → `main` / root
 After a minute the app is at `https://christoffergroenfeldt-cyber.github.io/happylife/`.
 
 ### 4. The family
-1. Open the link in Safari → **Create account** → **Create family** → pick your roles
-   (e.g. father + husband).
-2. **Family** tab shows the invite code. Each family member creates an account and
+1. Open the link in Safari → enter your email → enter the code from the email →
+   **Create family** → pick your roles (e.g. father + husband).
+2. **Family** tab shows the invite code. Each family member signs in the same way and
    chooses **Join family** with the code.
 3. Safari → Share → **Add to Home Screen** to get the app icon.
 
-Children need their own login (any email address the parents control works).
+Children need their own login: any email address works as long as someone can read the
+code (e.g. a parent's address with `+` – `mum+anna@gmail.com` – on Gmail).
 
 ## Files
 

@@ -104,10 +104,19 @@ button, input, select { font: inherit; color: inherit; }
 
 /* ---------- buttons ---------- */
 button { cursor: pointer; }
-.primary, .card button:not(.link):not(.icon), .toolbar button, .btns button, .acts button, .inline button, .seg button, .langs button {
+/* :where() keeps this base style at zero specificity so .primary, .link etc. always win */
+:where(.primary, .card button:not(.link):not(.icon), .toolbar button, .btns button, .acts button, .inline button, .seg button, .langs button) {
   border-radius: 12px; border: 1px solid var(--line); background: var(--surface); padding: 10px 16px; font-weight: 700;
+  transition: transform .08s ease, filter .15s ease, box-shadow .15s ease;
 }
-button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button.primary {
+  background: var(--accent); border: 1px solid var(--accent); color: var(--accent-ink);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+form > button.primary { padding: 13px 16px; font-size: 1.02rem; }
+button:active:not(:disabled) { transform: scale(.97); }
+button.primary:hover:not(:disabled) { filter: brightness(1.06); }
+input.otp { font: 700 1.6rem/1.2 ui-monospace, Menlo, monospace; letter-spacing: .3em; text-align: center; }
 button.small { padding: 6px 12px !important; font-size: .88rem; }
 button.danger { color: var(--accent); }
 button.link { background: none; border: 0; color: var(--accent); padding: 4px; font-weight: 600; }
