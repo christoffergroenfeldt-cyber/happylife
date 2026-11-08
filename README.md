@@ -1,0 +1,66 @@
+# Happy Life 💛
+
+A family web app (installable on iPhone from Safari) for daily tasks, plans for the
+children, family tasks anyone can take, vacations and anniversaries, and "moments"
+between husband and wife with reminders when it's time again.
+
+Danish, English and French – switch on the login screen or under **Family → Language**.
+
+## How it works
+
+| Area | What it does |
+|---|---|
+| **Roles** | Each person has one or more roles: child, mother, father, husband, wife. Everything is assigned to roles or people, and the database only returns what your roles may see. |
+| **Plans** | Mother/father create plans (e.g. "Morning routine") with tasks assigned to specific children – daily, weekly, monthly, yearly, once, or every X days. Each child ticks off their own; parents see ✓/○ per child. |
+| **Family tasks** | Open to everyone (or chosen roles), with "people needed". Anyone takes it for the current period; it's full when enough have taken it, and done when a taker ticks it. Like HØBK activities. |
+| **Role tasks** | E.g. a husband-only task – invisible to the wife and children. |
+| **Moments** | "When did I last …" – each with its own reminder interval in days. When the days have passed it appears on Home under *Time for something special* with an idea. Defaults on a new family: flowers + surprise (husband), surprise (wife), out together + trip together (both). |
+| **Calendar** | Vacations, anniversaries, birthdays. Yearly events show how many years; each shows on Home a chosen number of days before. |
+| **Family** | Invite code, members and roles. Only the admin (whoever created the family) can change roles, so a child can't make themself "wife". |
+
+Privacy is enforced in the database (Row Level Security), not just hidden in the app.
+
+## Setup (once, ~10 minutes)
+
+### 1. Supabase
+1. Create a free project at <https://supabase.com> (region: Frankfurt/EU).
+2. **SQL Editor → New query** → paste all of `schema.sql` → **Run**.
+3. **Authentication → Providers → Email**: keep enabled. For the family it's easiest to turn
+   **Confirm email** off; otherwise everyone must click a link in an email after signing up.
+4. **Authentication → URL Configuration**: set **Site URL** to
+   `https://christoffergroenfeldt-cyber.github.io/happylife/`.
+5. **Project Settings → API**: copy the **Project URL** and the **anon public** key.
+
+### 2. Config
+Put the two values into `config.js` and commit it. The anon key is meant to be public –
+Row Level Security protects the data.
+
+### 3. GitHub Pages
+Repo **Settings → Pages** → Source: *Deploy from a branch* → `main` / root → Save.
+After a minute the app is at `https://christoffergroenfeldt-cyber.github.io/happylife/`.
+
+### 4. The family
+1. Open the link in Safari → **Create account** → **Create family** → pick your roles
+   (e.g. father + husband).
+2. **Family** tab shows the invite code. Each family member creates an account and
+   chooses **Join family** with the code.
+3. Safari → Share → **Add to Home Screen** to get the app icon.
+
+Children need their own login (any email address the parents control works).
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `index.html`, `styles.css` | Page and design (light/dark mode) |
+| `app.js` | The app |
+| `i18n.js` | Danish/English/French texts and moment ideas |
+| `dates.js` | Period and reminder calculations |
+| `config.js` | Your Supabase URL and anon key |
+| `schema.sql` | Database, security rules and functions – safe to re-run |
+| `sw.js`, `manifest.json`, icons | Home-screen app and offline shell |
+
+## Ideas for later
+- Push notifications on iPhone when a moment is due (web push + a small scheduled job)
+- Points/rewards for children's plan tasks
+- Shared shopping list

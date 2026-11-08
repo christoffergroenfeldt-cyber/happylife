@@ -1,0 +1,379 @@
+-- Happy Life – Supabase schema
+-- Run this whole file once in Supabase: SQL Editor -> New query -> paste -> Run.
+-- Visibility is enforced by Row Level Security in the database, so an item
+-- assigned to "husband" can never be read by the wife or children, even with
+-- a modified app.
+
+
+-- ---------------------------------------------------------------- tables
+
+create table if not exists families (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  invite_code text not null unique
+              default upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8)),
+  created_at  timestamptz not null default now()
+);
+
+create table if not exists members (
+  user_id      uuid primary key references auth.users on delete cascade,
+  family_id    uuid not null references families on delete cascade,
+  display_name text not null,
+  roles        text[] not null default '{}',
+  is_admin     boolean not null default false,
+  created_at   timestamptz not null default now(),
+  constraint member_roles_valid
+    check (roles <@ array['child','mother','father','husband','wife'])
+);
+
+-- Helper functions (security definer so they can read members without
+-- recursing through members' own RLS policy)
+create or replace function my_family() returns uuid
+language sql stable security definer set search_path = public as $$
+  select family_id from members where user_id = auth.uid()
+$$;
+
+create or replace function my_roles() returns text[]
+language sql stable security definer set search_path = public as $$
+  select coalesce((select roles from members where user_id = auth.uid()), '{}')
+$$;
+
+create or replace function i_am_admin() returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select is_admin from members where user_id = auth.uid()), false)
+$$;
+
+-- An item is visible when it is for everyone, shares a role with me,
+-- or I created it (so a parent can follow up on a task given to the children).
+create or replace function can_see(item_roles text[], creator uuid) returns boolean
+language sql stable as $$
+  select 'all' = any(item_roles) or item_roles && my_roles() or creator = auth.uid()
+$$;
+
+create or replace function i_am_parent() returns boolean
+language sql stable as $$
+  select my_roles() && array['mother','father']
+$$;
+
+-- Everyone listed must be a member of my family
+create or replace function all_in_my_family(ids uuid[]) returns boolean
+language sql stable security definer set search_path = public as $$
+  select not exists (
+    select 1 from unnest(ids) u
+    where not exists (select 1 from members m where m.user_id = u and m.family_id = my_family()))
+$$;
+
+-- Plans: created by parents, e.g. "Morning routine" or "Weekend chores"
+create table if not exists plans (
+  id          uuid primary key default gen_random_uuid(),
+  family_id   uuid not null default my_family() references families on delete cascade,
+  title       text not null,
+  notes       text,
+  created_by  uuid default auth.uid() references auth.users on delete set null,
+  created_at  timestamptz not null default now()
+);
+
+-- A task is one of:
+--   * assigned to specific people (assignees) – each person ticks off their own
+--   * open family task (open = true) – anyone who can see it takes it; `need` people
+--   * role task (roles only) – e.g. husband-only
+create table if not exists tasks (
+  id            uuid primary key default gen_random_uuid(),
+  family_id     uuid not null default my_family() references families on delete cascade,
+  plan_id       uuid references plans on delete cascade,
+  title         text not null,
+  notes         text,
+  roles         text[] not null default '{}',
+  assignees     uuid[] not null default '{}',
+  open          boolean not null default false,
+  need          int not null default 1 check (need between 1 and 20),
+  recurrence    text not null default 'once'
+                check (recurrence in ('once','daily','weekly','monthly','yearly','custom')),
+  interval_days int check (interval_days is null or interval_days > 0),
+  start_date    date not null default current_date,
+  due_date      date,
+  created_by    uuid default auth.uid() references auth.users on delete set null,
+  created_at    timestamptz not null default now(),
+  constraint task_roles_valid check (
+    roles <@ array['all','child','mother','father','husband','wife']),
+  constraint task_has_audience check (cardinality(roles) > 0 or cardinality(assignees) > 0),
+  constraint task_custom_interval check (recurrence <> 'custom' or interval_days is not null)
+);
+
+create or replace function task_visible(item_roles text[], item_assignees uuid[], creator uuid)
+returns boolean language sql stable as $$
+  select can_see(item_roles, creator) or auth.uid() = any(item_assignees)
+$$;
+
+-- `period` identifies the occurrence: 'once', a date for daily/weekly/custom,
+-- 'YYYY-MM' for monthly, 'YYYY' for yearly (computed by the app).
+create table if not exists task_done (
+  id         uuid primary key default gen_random_uuid(),
+  task_id    uuid not null references tasks on delete cascade,
+  period     text not null,
+  done_on    date not null default current_date,
+  done_by    uuid not null default auth.uid() references auth.users on delete cascade,
+  created_at timestamptz not null default now(),
+  unique (task_id, period, done_by)
+);
+
+-- Who has taken an open family task for a period (like HØBK activities)
+create table if not exists task_takes (
+  task_id    uuid not null references tasks on delete cascade,
+  period     text not null,
+  user_id    uuid not null default auth.uid() references auth.users on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (task_id, period, user_id)
+);
+
+-- "Moments": things to do regularly, with a "days since last time" reminder
+create table if not exists trackers (
+  id            uuid primary key default gen_random_uuid(),
+  family_id     uuid not null default my_family() references families on delete cascade,
+  title         text not null,
+  kind          text not null default 'custom'
+                check (kind in ('flowers','surprise','date','trip','custom')),
+  roles         text[] not null,
+  interval_days int not null default 30 check (interval_days > 0),
+  created_by    uuid default auth.uid() references auth.users on delete set null,
+  created_at    timestamptz not null default now(),
+  constraint tracker_roles_valid check (cardinality(roles) > 0 and
+    roles <@ array['all','child','mother','father','husband','wife'])
+);
+
+create table if not exists tracker_entries (
+  id         uuid primary key default gen_random_uuid(),
+  tracker_id uuid not null references trackers on delete cascade,
+  done_on    date not null default current_date,
+  note       text,
+  done_by    uuid default auth.uid() references auth.users on delete set null,
+  created_at timestamptz not null default now()
+);
+
+-- Calendar: vacations, anniversaries, birthdays
+create table if not exists events (
+  id            uuid primary key default gen_random_uuid(),
+  family_id     uuid not null default my_family() references families on delete cascade,
+  type          text not null check (type in ('vacation','anniversary','birthday','other')),
+  title         text not null,
+  start_date    date not null,
+  end_date      date,
+  yearly        boolean not null default false,
+  remind_days   int not null default 7 check (remind_days >= 0),
+  roles         text[] not null default '{all}',
+  created_by    uuid default auth.uid() references auth.users on delete set null,
+  created_at    timestamptz not null default now(),
+  constraint event_roles_valid check (cardinality(roles) > 0 and
+    roles <@ array['all','child','mother','father','husband','wife'])
+);
+
+create index if not exists tasks_family on tasks(family_id);
+create index if not exists tasks_plan on tasks(plan_id);
+create index if not exists task_done_task on task_done(task_id, period);
+create index if not exists task_takes_task on task_takes(task_id, period);
+create index if not exists trackers_family on trackers(family_id);
+create index if not exists tracker_entries_tracker on tracker_entries(tracker_id, done_on);
+create index if not exists events_family on events(family_id);
+
+-- ---------------------------------------------------------------- RLS
+
+alter table families        enable row level security;
+alter table members         enable row level security;
+alter table plans           enable row level security;
+alter table tasks           enable row level security;
+alter table task_done       enable row level security;
+alter table task_takes      enable row level security;
+alter table trackers        enable row level security;
+alter table tracker_entries enable row level security;
+alter table events          enable row level security;
+
+drop policy if exists fam_select on families;
+create policy fam_select on families for select using (id = my_family());
+drop policy if exists fam_update on families;
+create policy fam_update on families for update
+  using (id = my_family() and i_am_admin()) with check (id = my_family());
+
+drop policy if exists mem_select on members;
+create policy mem_select on members for select using (family_id = my_family());
+drop policy if exists mem_delete on members;
+create policy mem_delete on members for delete
+  using (family_id = my_family() and i_am_admin() and user_id <> auth.uid());
+-- members are inserted/updated only through the functions below
+
+-- Plans: whole family can see them, only parents create/change them
+drop policy if exists plans_select on plans;
+create policy plans_select on plans for select using (family_id = my_family());
+drop policy if exists plans_insert on plans;
+create policy plans_insert on plans for insert
+  with check (family_id = my_family() and created_by = auth.uid() and i_am_parent());
+drop policy if exists plans_update on plans;
+create policy plans_update on plans for update
+  using (family_id = my_family() and i_am_parent()) with check (family_id = my_family());
+drop policy if exists plans_delete on plans;
+create policy plans_delete on plans for delete
+  using (family_id = my_family() and i_am_parent());
+
+-- Tasks
+--  see:    for my role / everyone / assigned to me / created by me
+--  create: anyone for themselves or a role; only parents assign to other
+--          people or put tasks in a plan
+--  change: creator or a parent (who can see it)
+drop policy if exists tasks_select on tasks;
+create policy tasks_select on tasks for select
+  using (family_id = my_family() and task_visible(roles, assignees, created_by));
+drop policy if exists tasks_insert on tasks;
+create policy tasks_insert on tasks for insert with check (
+  family_id = my_family() and created_by = auth.uid()
+  and all_in_my_family(assignees)
+  and (assignees <@ array[auth.uid()] or i_am_parent())
+  and (plan_id is null or i_am_parent()));
+drop policy if exists tasks_update on tasks;
+create policy tasks_update on tasks for update
+  using (family_id = my_family() and task_visible(roles, assignees, created_by)
+         and (created_by = auth.uid() or i_am_parent()))
+  with check (family_id = my_family() and all_in_my_family(assignees)
+         and (assignees <@ array[auth.uid()] or i_am_parent())
+         and (plan_id is null or i_am_parent()));
+drop policy if exists tasks_delete on tasks;
+create policy tasks_delete on tasks for delete
+  using (family_id = my_family() and task_visible(roles, assignees, created_by)
+         and (created_by = auth.uid() or i_am_parent()));
+
+-- Moments and calendar: role based
+do $$
+declare t text;
+begin
+  foreach t in array array['trackers','events'] loop
+    execute format('drop policy if exists %1$s_select on %1$s', t);
+    execute format('create policy %1$s_select on %1$s for select
+      using (family_id = my_family() and can_see(roles, created_by))', t);
+    execute format('drop policy if exists %1$s_insert on %1$s', t);
+    execute format('create policy %1$s_insert on %1$s for insert
+      with check (family_id = my_family() and created_by = auth.uid())', t);
+    execute format('drop policy if exists %1$s_update on %1$s', t);
+    execute format('create policy %1$s_update on %1$s for update
+      using (family_id = my_family() and can_see(roles, created_by))
+      with check (family_id = my_family())', t);
+    execute format('drop policy if exists %1$s_delete on %1$s', t);
+    execute format('create policy %1$s_delete on %1$s for delete
+      using (family_id = my_family() and can_see(roles, created_by))', t);
+  end loop;
+end $$;
+
+-- Completions/takes are visible exactly when their task is visible
+-- (the sub-select runs under the tasks table's RLS). You can only add or
+-- remove your own.
+drop policy if exists td_all on task_done;
+drop policy if exists td_select on task_done;
+create policy td_select on task_done for select
+  using (exists (select 1 from tasks t where t.id = task_id));
+drop policy if exists td_insert on task_done;
+create policy td_insert on task_done for insert
+  with check (done_by = auth.uid() and exists (select 1 from tasks t where t.id = task_id));
+drop policy if exists td_delete on task_done;
+create policy td_delete on task_done for delete using (done_by = auth.uid());
+
+drop policy if exists tt_select on task_takes;
+create policy tt_select on task_takes for select
+  using (exists (select 1 from tasks t where t.id = task_id));
+drop policy if exists tt_delete on task_takes;
+create policy tt_delete on task_takes for delete using (user_id = auth.uid());
+-- taking goes through take_task() so the "need" limit is respected
+
+drop policy if exists te_all on tracker_entries;
+create policy te_all on tracker_entries for all
+  using (exists (select 1 from trackers t where t.id = tracker_id))
+  with check (exists (select 1 from trackers t where t.id = tracker_id) and done_by = auth.uid());
+
+-- ---------------------------------------------------------------- functions
+
+create or replace function clean_roles(r text[]) returns text[]
+language sql immutable as $$
+  select coalesce(array_agg(distinct x), '{}')
+  from unnest(r) x where x in ('child','mother','father','husband','wife')
+$$;
+
+-- First family member creates the family and becomes admin.
+-- Default "moments" are created without an owner, so each is visible only
+-- to its roles (the wife never sees the husband's flower tracker).
+create or replace function create_family(p_name text, p_display_name text,
+                                         p_roles text[], p_lang text default 'da')
+returns families language plpgsql security definer set search_path = public as $$
+declare f families; l text := coalesce(p_lang, 'da');
+begin
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  if exists (select 1 from members where user_id = auth.uid()) then
+    raise exception 'already in a family';
+  end if;
+  insert into families(name) values (trim(p_name)) returning * into f;
+  insert into members(user_id, family_id, display_name, roles, is_admin)
+    values (auth.uid(), f.id, trim(p_display_name), clean_roles(p_roles), true);
+
+  insert into trackers(family_id, title, kind, roles, interval_days, created_by) values
+    (f.id, case l when 'en' then 'Gave flowers'      when 'fr' then 'Offert des fleurs'   else 'Givet blomster'        end, 'flowers',  '{husband}',      30,  null),
+    (f.id, case l when 'en' then 'Surprised my wife' when 'fr' then 'Surpris ma femme'    else 'Overrasket min kone'   end, 'surprise', '{husband}',      60,  null),
+    (f.id, case l when 'en' then 'Surprised my husband' when 'fr' then 'Surpris mon mari' else 'Overrasket min mand'   end, 'surprise', '{wife}',         60,  null),
+    (f.id, case l when 'en' then 'Went out together' when 'fr' then 'Sortie en amoureux'  else 'Været ude sammen'      end, 'date',     '{husband,wife}', 30,  null),
+    (f.id, case l when 'en' then 'Trip together'     when 'fr' then 'Voyage à deux'       else 'Været på tur sammen'   end, 'trip',     '{husband,wife}', 180, null);
+  return f;
+end $$;
+
+create or replace function join_family(p_code text, p_display_name text, p_roles text[])
+returns families language plpgsql security definer set search_path = public as $$
+declare f families;
+begin
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  if exists (select 1 from members where user_id = auth.uid()) then
+    raise exception 'already in a family';
+  end if;
+  select * into f from families where invite_code = upper(trim(p_code));
+  if not found then raise exception 'invalid invite code'; end if;
+  insert into members(user_id, family_id, display_name, roles)
+    values (auth.uid(), f.id, trim(p_display_name), clean_roles(p_roles));
+  return f;
+end $$;
+
+-- Only the admin can change roles (so a child can't make themself "wife")
+create or replace function set_member_roles(p_user uuid, p_roles text[], p_admin boolean default null)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not i_am_admin() then raise exception 'admin only'; end if;
+  update members set roles = clean_roles(p_roles),
+                     is_admin = coalesce(p_admin, is_admin)
+   where user_id = p_user and family_id = my_family();
+end $$;
+
+create or replace function rename_me(p_name text)
+returns void language sql security definer set search_path = public as $$
+  update members set display_name = trim(p_name) where user_id = auth.uid()
+$$;
+
+create or replace function new_invite_code()
+returns text language plpgsql security definer set search_path = public as $$
+declare c text := upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8));
+begin
+  if not i_am_admin() then raise exception 'admin only'; end if;
+  update families set invite_code = c where id = my_family();
+  return c;
+end $$;
+
+-- Take an open family task for a period (refuses when enough people have taken it)
+create or replace function take_task(p_task uuid, p_period text)
+returns void language plpgsql security definer set search_path = public as $$
+declare tk tasks; n int;
+begin
+  select * into tk from tasks where id = p_task and family_id = my_family()
+    and task_visible(roles, assignees, created_by) for update;
+  if not found or not tk.open then raise exception 'task not found'; end if;
+  if exists (select 1 from task_takes where task_id = p_task and period = p_period and user_id = auth.uid()) then
+    return;
+  end if;
+  select count(*) into n from task_takes where task_id = p_task and period = p_period;
+  if n >= tk.need then raise exception 'task full'; end if;
+  insert into task_takes(task_id, period, user_id) values (p_task, p_period, auth.uid());
+end $$;
+
+revoke execute on function create_family(text,text,text[],text), join_family(text,text,text[]),
+  set_member_roles(uuid,text[],boolean), rename_me(text), new_invite_code(), take_task(uuid,text) from anon, public;
+grant execute on function create_family(text,text,text[],text), join_family(text,text,text[]),
+  set_member_roles(uuid,text[],boolean), rename_me(text), new_invite_code(), take_task(uuid,text) to authenticated;
