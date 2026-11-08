@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Kalender-guide · Happy Life</title>
+  <meta name="theme-color" content="#f7efe6" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1d1a17" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .guide { max-width: 640px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 20px) 16px 48px; }
+    .guide h1 { font-size: 1.7rem; margin: 6px 0 4px; }
+    .guide .lede { color: var(--muted); margin: 0 0 18px; }
+    .guide h2 { margin: 28px 0 10px; }
+    ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+    ol.steps > li { counter-increment: s; position: relative; background: var(--surface); border: 1px solid var(--line);
+      border-radius: 14px; padding: 12px 14px 12px 52px; }
+    ol.steps > li::before { content: counter(s); position: absolute; left: 12px; top: 12px; width: 28px; height: 28px;
+      border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-weight: 800; display: grid; place-items: center; font-size: .9rem; }
+    .act { font-weight: 800; }
+    .en { color: var(--muted); font-size: .85rem; font-weight: 600; }
+    .val { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+    .val code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font: 600 .82rem/1.3 ui-monospace, Menlo, monospace; background: var(--bg); border: 1px solid var(--line);
+      border-radius: 10px; padding: 9px 10px; }
+    .val button { flex: none; border-radius: 10px; border: 1px solid var(--accent); background: var(--accent);
+      color: var(--accent-ink); font-weight: 800; padding: 8px 12px; }
+    .val button.done { background: var(--ok); border-color: var(--ok); }
+    table.fields { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: .9rem; }
+    table.fields td { padding: 6px 4px; border-top: 1px solid var(--line); vertical-align: middle; }
+    table.fields td:first-child { font: 700 .85rem ui-monospace, Menlo, monospace; white-space: nowrap; }
+    table.fields button { border-radius: 8px; border: 1px solid var(--line); background: var(--bg); font-weight: 700; padding: 4px 8px; }
+    .tip { margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); font-size: .92rem; }
+    .warn { background: color-mix(in srgb, var(--gold) 22%, var(--surface)); }
+    .nocode { display: none; }
+    body.no-code .nocode { display: block; }
+    button.mini { border-radius: 8px; border: 1px solid var(--line); background: var(--bg); font-weight: 700; padding: 2px 8px; font-size: .8rem; }
+    a.back { color: var(--accent); font-weight: 700; text-decoration: none; }
+    ul.plain { margin: 6px 0 0; padding-left: 20px; }
+  </style>
+</head>
+<body>
+<main class="guide">
+  <a class="back" href="./">← Happy Life</a>
+  <h1>📱 Kalender fra iPhone</h1>
+  <p class="lede">Byg genvejen én gang (ca. 10 minutter). Derefter henter den selv fødselsdage og mærkedage ind i Happy Life hver dag. Kun kalendere, du slår til i appen, bliver gemt.</p>
+
+  <div class="tip warn nocode">⚠️ Åbn denne side fra appen (Familie → Kalender fra iPhone → <b>Sådan laver du genvejen</b>), så står din personlige kode klar herunder.</div>
+
+  <h2>Før du starter</h2>
+  <ol class="steps">
+    <li>Åbn <b>Indstillinger → Apps → Genveje → Avanceret</b> og slå <b>Tillad deling af store mængder data</b> til.
+      <div class="en">Settings → Apps → Shortcuts → Advanced → Allow Sharing Large Amounts of Data</div></li>
+    <li>Åbn appen <b>Genveje</b> og tryk <b>＋</b> for en ny genvej. Kald den <b>Happy Life Sync</b>.</li>
+  </ol>
+
+  <h2>Handlingerne – i denne rækkefølge</h2>
+  <p class="lede">Søg efter handlingen i feltet nederst, og tryk på den for at tilføje den.</p>
+  <ol class="steps">
+    <li><span class="act">Tekst</span> <span class="en">(Text)</span> – indsæt din kode:
+      <div class="val"><code id="code">—</code><button data-copy="code">Kopiér</button></div>
+      Tilføj så <span class="act">Angiv variabel</span> <span class="en">(Set Variable)</span> og kald den <b>Kode</b>.</li>
+    <li><span class="act">Find kalenderbegivenheder</span> <span class="en">(Find Calendar Events)</span>
+      <ul class="plain"><li><b>Alle kalenderbegivenheder</b></li>
+        <li>Tryk <b>Tilføj filter</b>: <b>Startdato</b> · <b>er i de næste</b> · <b>365 dage</b></li>
+        <li><b>Begræns</b> slået fra</li></ul></li>
+    <li><span class="act">Tekst</span> – tryk i feltet, vælg variablen <b>Kalenderbegivenheder</b>, tryk på den igen og vælg <b>Titel</b>.
+      Tilføj <span class="act">Angiv variabel</span>: <b>Titler</b>.</li>
+    <li><span class="act">Tekst</span> – <b>Kalenderbegivenheder</b> → <b>Startdato</b>. Tryk på variablen igen:
+      <b>Datoformat: ISO 8601</b> og slå <b>Medtag ISO 8601-tid</b> til. <span class="act">Angiv variabel</span>: <b>Start</b>.</li>
+    <li><span class="act">Tekst</span> – <b>Kalenderbegivenheder</b> → <b>Slutdato</b>, samme format som før.
+      <span class="act">Angiv variabel</span>: <b>Slut</b>.</li>
+    <li><span class="act">Tekst</span> – <b>Kalenderbegivenheder</b> → <b>Er heldags</b>. <span class="act">Angiv variabel</span>: <b>Heldags</b>.</li>
+    <li><span class="act">Tekst</span> – <b>Kalenderbegivenheder</b> → <b>Kalender</b>. <span class="act">Angiv variabel</span>: <b>Kalendere</b>.</li>
+    <li><span class="act">Hent indholdet af URL</span> <span class="en">(Get Contents of URL)</span>
+      <div class="val"><code id="url"></code><button data-copy="url">Kopiér</button></div>
+      Tryk <b>›</b> for at vise flere: <b>Metode: POST</b>. Under <b>Overskrifter</b> tilføj en overskrift med navnet <b>apikey</b> <button class="mini" data-copy-text="apikey">Kopiér navn</button> og denne værdi:
+      <div class="val"><code id="key"></code><button data-copy="key">Kopiér</button></div>
+      <b>Anmodningsbrødtekst: JSON</b> – tilføj 6 felter af typen <b>Tekst</b>, hver med sin variabel som værdi:
+      <table class="fields">
+        <tr><td>p_token</td><td>Kode</td><td><button data-copy-text="p_token">Kopiér</button></td></tr>
+        <tr><td>p_titles</td><td>Titler</td><td><button data-copy-text="p_titles">Kopiér</button></td></tr>
+        <tr><td>p_starts</td><td>Start</td><td><button data-copy-text="p_starts">Kopiér</button></td></tr>
+        <tr><td>p_ends</td><td>Slut</td><td><button data-copy-text="p_ends">Kopiér</button></td></tr>
+        <tr><td>p_allday</td><td>Heldags</td><td><button data-copy-text="p_allday">Kopiér</button></td></tr>
+        <tr><td>p_calendars</td><td>Kalendere</td><td><button data-copy-text="p_calendars">Kopiér</button></td></tr>
+      </table></li>
+    <li><span class="act">Vis meddelelse</span> <span class="en">(Show Notification)</span> – med variablen <b>Indholdet af URL</b>.</li>
+  </ol>
+
+  <h2>Kør den første gang</h2>
+  <ol class="steps">
+    <li>Tryk ▶︎. Tillad adgang til <b>Kalendere</b>, og vælg <b>Tillad altid</b>, når den spørger om at forbinde til supabase.co.</li>
+    <li>Meddelelsen skriver fx <i>"Happy Life: 3 begivenheder fra 1 af 6 kalendere."</i></li>
+    <li>Åbn Happy Life → <b>Familie → Kalender fra iPhone</b>. Slå de kalendere til, der skal med (fx Fødselsdage og Familie), og kør genvejen igen.</li>
+  </ol>
+  <div class="tip">Står der <b>"Afvist …"</b>, er intet blevet gemt – teksten fortæller hvorfor (ofte en begivenhedstitel med linjeskift). Står der <b>"Ukendt synkroniseringskode"</b>, så kopiér koden igen fra appen.</div>
+
+  <h2>Hold den opdateret automatisk</h2>
+  <ol class="steps">
+    <li>I Genveje: <b>Automatisering → ＋ → Tidspunkt</b>, fx <b>07:00</b>, <b>Dagligt</b>, og <b>Kør med det samme</b>.</li>
+    <li>Vælg <span class="act">Kør genvej</span> → <b>Happy Life Sync</b>.</li>
+  </ol>
+  <p class="lede">Begivenheder, du sletter på telefonen, forsvinder fra Happy Life ved næste kørsel – sammen med opgaverne til dem.</p>
+
+  <h2>Del genvejen med din partner</h2>
+  <ol class="steps">
+    <li>I genvejens indstillinger (ⓘ): <b>Importspørgsmål → Tilføj spørgsmål</b>, vælg Tekst-feltet fra trin 1 og skriv <i>"Indsæt din kode fra Happy Life"</i>.</li>
+    <li><b>Del → Kopiér iCloud-link</b> og send linket. Din partner henter sin egen kode under Familie i appen.</li>
+  </ol>
+  <p class="lede" style="margin-top:24px">Koden er personlig – del den ikke. Laver du en ny kode i appen, skal genvejen have den nye.</p>
+</main>
+<script type="module">
+  import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
+  const code = new URLSearchParams(location.hash.slice(1)).get('kode') || '';
+  document.getElementById('code').textContent = code || '— åbn siden fra appen —';
+  if (!code) document.body.classList.add('no-code');
+  document.getElementById('url').textContent = `${SUPABASE_URL}/rest/v1/rpc/sync_calendar`;
+  document.getElementById('key').textContent = SUPABASE_ANON_KEY;
+  const flash = (btn) => { const t = btn.textContent; btn.textContent = 'Kopieret ✓'; btn.classList.add('done');
+    setTimeout(() => { btn.textContent = t; btn.classList.remove('done'); }, 1500); };
+  const copy = async (text, btn) => {
+    try { await navigator.clipboard.writeText(text); flash(btn); }
+    catch { prompt('Kopiér:', text); }
+  };
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.copy) {
+      const v = document.getElementById(b.dataset.copy).textContent;
+      if (b.dataset.copy === 'code' && !code) return;
+      copy(v, b);
+    } else if (b.dataset.copyText) copy(b.dataset.copyText, b);
+  });
+</script>
+</body>
+</html>

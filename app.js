@@ -991,7 +991,8 @@ function loginCodeSection() {
     </div>`;
 }
 
-const SHORTCUT_GUIDE ='https://github.com/christoffergroenfeldt-cyber/happylife#calendar-from-iphone-shortcut';
+// Step-by-step page (kalender-guide.html); the sync code travels in the #fragment, which is never sent to a server
+const shortcutGuide = (token) => `kalender-guide.html#kode=${encodeURIComponent(token || '')}`;
 
 // Parents: personal sync code for the iPhone Shortcut, and which phone calendars to import
 function calendarSection() {
@@ -1018,7 +1019,7 @@ function calendarSection() {
           </div>`).join('')}</div>
           <p class="hint">${esc(t('calListHelp'))}</p>` : ''}
         <div class="acts">
-          <a class="btnlink" href="${SHORTCUT_GUIDE}" target="_blank" rel="noopener">${t('howTo')} ↗</a>
+          <a class="btnlink primary-link" href="${shortcutGuide(s.token)}" target="_blank" rel="noopener">📖 ${t('howTo')}</a>
           <button type="button" class="small" data-act="newSyncCode">${t('newSyncCode')}</button>
         </div>`
       : `<button type="button" class="primary" data-act="makeSyncCode">${t('makeCode')}</button>`}
