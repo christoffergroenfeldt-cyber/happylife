@@ -506,3 +506,16 @@ revoke execute on function create_family(text,text,text[],text), join_family(tex
 grant execute on function create_family(text,text,text[],text), join_family(text,text,text[]),
   set_member_roles(uuid,text[],boolean), rename_me(text), new_invite_code(), take_task(uuid,text),
   save_push(text,text,text,text), points_summary() to authenticated;
+
+-- ---------------------------------------------------------------- hardening
+-- Helper functions are only for signed-in family members; the points trigger
+-- function is never called directly; fixed search_path everywhere.
+revoke execute on function my_family(), my_roles(), i_am_admin(), all_in_my_family(uuid[]),
+  can_see(text[], uuid), i_am_parent(), task_visible(text[], uuid[], uuid), clean_roles(text[]) from anon, public;
+grant execute on function my_family(), my_roles(), i_am_admin(), all_in_my_family(uuid[]),
+  can_see(text[], uuid), i_am_parent(), task_visible(text[], uuid[], uuid), clean_roles(text[]) to authenticated;
+revoke execute on function task_done_points() from anon, authenticated, public;
+alter function can_see(text[], uuid) set search_path = public;
+alter function i_am_parent() set search_path = public;
+alter function task_visible(text[], uuid[], uuid) set search_path = public;
+alter function clean_roles(text[]) set search_path = public;
