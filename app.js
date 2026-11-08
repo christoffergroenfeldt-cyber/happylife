@@ -2,6 +2,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, VAPID_PUBLIC_KEY } from './config.js';
 import { t, setLang, getLang, LANGS, IDEAS, EVENT_TASKS } from './i18n.js';
+import { AGES, ROUTINES, ROUTINE_REC, ROUTINE_TIME, TEMPLATES } from './templates.js';
 import { todayISO, daysBetween, addDays, trackerStatus, eventStatus, periodKey, periodEnd, eventOccurrence, fmtDate } from './dates.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -12,7 +13,7 @@ const PARENT = ['mother', 'father'];
 const S = {
   session: null, me: null, family: null, members: [],
   plans: [], tasks: [], done: [], takes: [], trackers: [], entries: [], events: [], points: [],
-  sync: null, calendars: [], loginCode: null,
+  sync: null, calendars: [], loginCode: null, suggestions: [], ideaTab: 'event',
   tab: 'home', authStep: 'email', authEmail: '', setupMode: 'create', ideaShift: {}, pushOn: false,
 };
 
@@ -86,6 +87,9 @@ async function loadAll() {
     run(sb.rpc('points_summary')),
   ]);
   Object.assign(S, { family, members, plans, tasks, done, takes, trackers, entries, events, points: points || [] });
+  // Idea lists (only rows for my roles come back; a missing table just means none)
+  const { data: sugg } = await sb.from('suggestions').select('*');
+  S.suggestions = sugg || [];
   if (isParent()) {
     const [sync, calendars] = await Promise.all([
       run(sb.from('sync_tokens').select('*').maybeSingle()),
@@ -481,7 +485,8 @@ function viewTasks() {
     ${pointsCard()}
     <div class="toolbar">
       <button class="primary" data-act="newTask">＋ ${t('newTask')}</button>
-      ${isParent() ? `<button data-act="newPlan">＋ ${t('newPlan')}</button>` : ''}
+      ${isParent() ? `<button data-act="newPlan">＋ ${t('newPlan')}</button>
+        <button data-act="templatePlan">📋 ${t('fromTemplate')}</button>` : ''}
     </div>
     <h2>${esc(t('myTasks'))}</h2>
     ${mine.length ? `<div class="list">${mine.map(({ task, st }) => taskRow(task, st, { manage: true })).join('')}</div>`
@@ -529,7 +534,7 @@ function taskForm(task, planId, preset = null) {
   const kind = editing ? taskKind(tk) : (planId || isEvent ? 'assigned' : 'open');
   const kinds = isParent() ? ['assigned', 'open', 'role'] : ['open', 'role'];
   const assignable = isParent() ? S.members : S.members.filter((m) => m.user_id === uid());
-  const recs = ['once', 'daily', 'weekly', 'monthly', 'yearly', 'custom'];
+  const recs = ['once', 'daily', 'weekdays', 'weekly', 'monthly', 'yearly', 'custom'];
   openDialog(`
     <form id="taskForm" class="form">
       <h2>${editing ? t('edit') : t('newTask')}</h2>
@@ -549,7 +554,7 @@ function taskForm(task, planId, preset = null) {
       : `<label>${t('recurrence')}<select name="recurrence">${recs.map((r) =>
         `<option value="${r}" ${r === tk.recurrence ? 'selected' : ''}>${esc(t('rec.' + r))}</option>`).join('')}</select></label>`}
       <label data-rec="custom">${t('intervalN')}<input name="interval_days" type="number" min="1" value="${tk.interval_days || 3}"></label>
-      <label data-rec="daily weekly monthly yearly custom">${t('startDate')}<input name="start_date" type="date" value="${tk.start_date}"></label>
+      <label data-rec="daily weekdays weekly monthly yearly custom">${t('startDate')}<input name="start_date" type="date" value="${tk.start_date}"></label>
       <label data-rec="once">${t('due')}<input name="due_date" type="date" value="${tk.due_date || ''}"></label>
       <fieldset><legend>🔔 ${t('reminder')}</legend>
         <div class="two">
@@ -557,7 +562,7 @@ function taskForm(task, planId, preset = null) {
           <label>${t('daysBeforeDue')}<input name="remind_days_before" type="number" min="0" max="60" value="${tk.remind_days_before || 0}"></label>
         </div>
         <p class="hint" data-rec="once">${esc(t('reminderHelpOnce'))}</p>
-        <p class="hint" data-rec="daily weekly monthly yearly custom">${esc(t('reminderHelp'))}</p>
+        <p class="hint" data-rec="daily weekdays weekly monthly yearly custom">${esc(t('reminderHelp'))}</p>
         <p class="hint" data-rec="event">${esc(t('reminderHelpEvent'))}</p>
       </fieldset>
       <div class="btns">
@@ -605,6 +610,68 @@ function taskForm(task, planId, preset = null) {
     else await run(sb.from('tasks').insert(row));
     closeDialog(); await refresh();
     if (isEvent && ev) eventForm(S.events.find((e) => e.id === ev.id)); // back to the event
+  };
+}
+
+// Ready-made routines for children (templates.js) -> normal, editable plans
+function templateForm() {
+  const kids = children();
+  const lang = TEMPLATES[getLang()] ? getLang() : 'da';
+  openDialog(`
+    <form id="tplForm" class="form">
+      <h2>📋 ${t('fromTemplate')}</h2>
+      <p class="hint">${esc(t('templateHelp'))}</p>
+      ${kids.length ? `<fieldset><legend>${t('forChildren')}</legend>${memberCheckboxes('kids', kids, kids.length === 1 ? [kids[0].user_id] : [])}</fieldset>`
+        : `<p class="hint">⚠️ ${esc(t('noChildrenYet'))}</p>`}
+      <fieldset><legend>${t('ageGroup')}</legend><div class="checks">${AGES.map((a, i) => `
+        <label class="check"><input type="radio" name="age" value="${a}" ${i === 1 ? 'checked' : ''}><span>${esc(t('ageN', a))}</span></label>`).join('')}</div></fieldset>
+      <fieldset><legend>${t('routines')}</legend><div class="checks">${ROUTINES.map((r) => `
+        <label class="check"><input type="checkbox" name="routines" value="${r}" checked><span>${esc(t('routine.' + r))}</span></label>`).join('')}</div></fieldset>
+      <div class="two">
+        <label>⭐ ${t('pointsPerTask')}<input name="points" type="number" min="0" max="1000" value="1"></label>
+        <label class="check tall"><input type="checkbox" name="remind"><span>🔔 ${t('withReminders')}</span></label>
+      </div>
+      <div id="tplPreview" class="tpl-preview"></div>
+      <div class="btns"><span class="grow"></span>
+        <button type="button" data-act="close">${t('cancel')}</button>
+        <button class="primary" type="submit" ${kids.length ? '' : 'disabled'}>${t('create')}</button></div>
+    </form>`);
+  const form = document.getElementById('tplForm');
+  const preview = () => {
+    const age = Number(new FormData(form).get('age'));
+    const chosen = new FormData(form).getAll('routines');
+    const remind = form.elements.remind.checked;
+    document.getElementById('tplPreview').innerHTML = chosen.map((r) => `
+      <div class="tpl-routine"><div class="ttl">${esc(t('routine.' + r))}
+        <span class="meta">· ${esc(t('rec.' + ROUTINE_REC[r]))}${remind ? ` · 🔔 ${ROUTINE_TIME[r][age]}` : ''}</span></div>
+        <ul>${TEMPLATES[lang][age][r].map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>`).join('');
+  };
+  form.onchange = preview; preview();
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(form);
+    const kidIds = f.getAll('kids');
+    const age = Number(f.get('age'));
+    const chosen = f.getAll('routines');
+    const points = Math.min(1000, Math.max(0, Math.round(Number(f.get('points')) || 0)));
+    if (!kidIds.length) return toast(t('pickChild'), true);
+    if (!chosen.length) return toast(t('pickRoutine'), true);
+    if (e.submitter) e.submitter.disabled = true;
+    const names = kidIds.map(memberName).join(' & ');
+    try {
+      for (const r of chosen) {
+        const [plan] = await run(sb.from('plans').insert({
+          title: `${t('routine.' + r)} – ${names}`, notes: t('templateNote', { age }),
+        }).select());
+        await run(sb.from('tasks').insert(TEMPLATES[lang][age][r].map((title) => ({
+          title, plan_id: plan.id, recurrence: ROUTINE_REC[r], start_date: today(),
+          assignees: kidIds, roles: PARENT, open: false, need: 1, points,
+          remind_time: f.get('remind') === 'on' ? ROUTINE_TIME[r][age] : null, remind_days_before: 0,
+        }))));
+      }
+      closeDialog(); await refresh();
+      toast(t('templateCreated', { n: chosen.length }));
+    } catch { if (e.submitter) e.submitter.disabled = false; }
   };
 }
 
@@ -678,7 +745,60 @@ function viewMoments() {
     .sort((a, b) => a.st.dueIn - b.st.dueIn)
     .map(({ tr, st }) => momentCard(tr, st)).join('');
   return `<div class="toolbar"><button class="primary" data-act="newMoment">＋ ${t('newMoment')}</button></div>
-    ${cards || `<p class="empty">${esc(t('noMoments'))}</p>`}`;
+    ${cards || `<p class="empty">${esc(t('noMoments'))}</p>`}
+    ${ideasSection()}`;
+}
+
+// ------------------------------------------------------------ ideas for the two of you
+// Experiences, restaurant deals and getaways, kept up to date by a weekly job.
+
+const fmtDrive = (min) => {
+  const h = Math.floor(min / 60), m = min % 60;
+  return h ? `${h} t${m ? ` ${m} min` : ''}` : `${m} min`;
+};
+
+function ideasSection() {
+  if (!S.suggestions.length) return '';
+  const kinds = ['event', 'restaurant', 'getaway'];
+  const icons = { event: '🎭', restaurant: '🍽️', getaway: '🧳' };
+  const list = S.suggestions.filter((x) => x.kind === S.ideaTab)
+    .sort((a, b) => S.ideaTab === 'getaway'
+      ? (a.needs_flight - b.needs_flight) || ((a.drive_minutes ?? 9999) - (b.drive_minutes ?? 9999))
+      : (a.starts_on || '9999').localeCompare(b.starts_on || '9999') || a.title.localeCompare(b.title));
+  const checked = S.suggestions.map((x) => x.checked_on).sort().pop();
+  return `
+    <h2>💡 ${esc(t('ideasTitle'))}</h2>
+    <p class="hint">${esc(t('ideasHelp'))}</p>
+    <div class="seg ideas-seg">${kinds.map((k) => `
+      <button data-act="ideaTab" data-id="${k}" class="${S.ideaTab === k ? 'on' : ''}">${icons[k]} ${esc(t('ideaKind.' + k))}
+        <small>${S.suggestions.filter((x) => x.kind === k).length}</small></button>`).join('')}</div>
+    <div class="list ideas">${list.map(ideaCard).join('') || `<p class="empty">${esc(t('noIdeas'))}</p>`}</div>
+    ${checked ? `<p class="hint">${esc(t('ideasUpdated', { date: fmtDate(checked, getLang()) }))}</p>` : ''}`;
+}
+
+function ideaCard(x) {
+  const L = getLang();
+  const when = x.starts_on
+    ? (x.ends_on && x.ends_on !== x.starts_on ? `${fmtDate(x.starts_on, L)} – ${fmtDate(x.ends_on, L)}` : fmtDate(x.starts_on, L))
+    : x.ends_on ? t('until', { date: fmtDate(x.ends_on, L) }) : '';
+  const travel = x.needs_flight ? `✈️ ${t('byPlane')}`
+    : x.drive_minutes != null ? `🚗 ${t('driveApprox', { time: fmtDrive(x.drive_minutes) })}` : '';
+  return `
+    <div class="card idea-card">
+      <div class="idea-head">
+        <h3>${esc(x.title)}</h3>
+        ${travel ? `<span class="travel ${x.needs_flight ? 'fly' : ''}">${esc(travel)}</span>` : ''}
+      </div>
+      <div class="meta">${[x.place, when].filter(Boolean).map(esc).join(' · ')}</div>
+      ${x.price ? `<div class="deal">${esc(x.price)}</div>` : ''}
+      ${x.description ? `<p class="notes">${esc(x.description)}</p>` : ''}
+      ${x.travel_note ? `<p class="hint">${esc(x.travel_note)}</p>` : ''}
+      <div class="acts">
+        <a class="btnlink primary-link" href="${esc(x.url)}" target="_blank" rel="noopener">${t('seeOffer')} ↗</a>
+        <button type="button" class="small" data-act="ideaToCalendar" data-id="${x.id}">📅 ${t('toCalendar')}</button>
+      </div>
+      ${x.source ? `<div class="src">${esc(t('source'))}: ${esc(x.source)}</div>` : ''}
+    </div>`;
 }
 
 function momentForm(tr) {
@@ -778,8 +898,8 @@ function eventTasksSection(ev) {
     </fieldset>`;
 }
 
-function eventForm(ev) {
-  const e0 = ev || { type: 'vacation', title: '', start_date: today(), end_date: '', yearly: false, remind_days: 14, roles: ['all'] };
+function eventForm(ev, preset = null) {
+  const e0 = ev || { type: 'vacation', title: '', start_date: today(), end_date: '', yearly: false, remind_days: 14, roles: ['all'], ...preset };
   const fixed = !!ev?.imported; // title and dates come from the phone
   openDialog(`
     <form id="eventForm" class="form">
@@ -994,6 +1114,18 @@ const ACTIONS = {
   },
 
   newPlan: () => planForm(null),
+  templatePlan: () => templateForm(),
+  ideaTab: (id) => { S.ideaTab = id; render(); },
+  ideaToCalendar: (id) => {
+    const x = byId(S.suggestions, id);
+    const start = x.starts_on && x.starts_on >= today() ? x.starts_on : today();
+    eventForm(null, {
+      type: x.kind === 'getaway' ? 'vacation' : 'other', title: x.title, start_date: start,
+      end_date: x.ends_on && x.starts_on && x.ends_on !== x.starts_on && x.kind === 'getaway' ? x.ends_on : '',
+      remind_days: 7, roles: myRoles().filter((r) => ['husband', 'wife'].includes(r)).length
+        ? myRoles().filter((r) => ['husband', 'wife'].includes(r)) : ['all'],
+    });
+  },
   editPlan: (id) => planForm(byId(S.plans, id)),
   delPlan: async (id) => { if (!confirm(t('confirmDelete'))) return;
     await run(sb.from('plans').delete().eq('id', id)); closeDialog(); await refresh(); },

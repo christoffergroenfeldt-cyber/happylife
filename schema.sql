@@ -533,7 +533,7 @@ alter function clean_roles(text[]) set search_path = public;
 
 alter table tasks drop constraint if exists tasks_recurrence_check;
 alter table tasks add constraint tasks_recurrence_check
-  check (recurrence in ('once','daily','weekly','monthly','yearly','custom','event'));
+  check (recurrence in ('once','daily','weekdays','weekly','monthly','yearly','custom','event'));
 alter table tasks add column if not exists event_id uuid references events on delete cascade;
 alter table tasks add column if not exists days_before int not null default 0
   check (days_before between 0 and 365);
@@ -877,3 +877,37 @@ end $$;
 revoke execute on function create_login_code(), redeem_login_code(text) from public, anon, authenticated;
 grant execute on function create_login_code() to authenticated;
 grant execute on function redeem_login_code(text) to service_role;
+
+-- ================================================================ ideas for couples
+-- Lists kept up to date by a weekly research job (it writes with the service
+-- role): experiences in the Copenhagen area, restaurant deals and getaway
+-- deals. Shared by all families; visible to the roles in `roles` (husband by
+-- default, so the wife won't spot the surprise). Content is in Danish.
+
+create table if not exists suggestions (
+  id            uuid primary key default gen_random_uuid(),
+  kind          text not null check (kind in ('event','restaurant','getaway')),
+  title         text not null,
+  description   text,
+  place         text,
+  starts_on     date,
+  ends_on       date,
+  price         text,
+  url           text not null check (url ~ '^https://'),
+  drive_minutes int check (drive_minutes is null or drive_minutes between 0 and 1440),
+  needs_flight  boolean not null default false,
+  travel_note   text,
+  source        text,
+  roles         text[] not null default '{husband}',
+  added_on      date not null default current_date,
+  checked_on    date not null default current_date,
+  constraint suggestion_roles_valid check (cardinality(roles) > 0 and
+    roles <@ array['all','child','mother','father','husband','wife']),
+  unique (kind, url, title)
+);
+alter table suggestions enable row level security;
+drop policy if exists sugg_select on suggestions;
+create policy sugg_select on suggestions for select
+  using (auth.uid() is not null and ('all' = any(roles) or roles && my_roles())
+         and coalesce(ends_on, starts_on, current_date) >= current_date);
+grant select on suggestions to authenticated;

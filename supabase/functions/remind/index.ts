@@ -47,6 +47,7 @@ function periodKey(task: Task, day: string): string | null {
   if (task.start_date && day < task.start_date && task.recurrence !== 'once') return null;
   switch (task.recurrence) {
     case 'daily': return day;
+    case 'weekdays': return [0, 6].includes(new Date(toUTC(day)).getUTCDay()) ? null : day;
     case 'weekly': return weekStart(day);
     case 'monthly': return day.slice(0, 7);
     case 'yearly': return day.slice(0, 4);
@@ -60,7 +61,7 @@ function periodKey(task: Task, day: string): string | null {
 
 function periodEnd(task: Task, day: string): string | null {
   switch (task.recurrence) {
-    case 'daily': return day;
+    case 'daily': case 'weekdays': return day;
     case 'weekly': return addDays(weekStart(day), 6);
     case 'monthly': {
       const [y, m] = day.split('-').map(Number);

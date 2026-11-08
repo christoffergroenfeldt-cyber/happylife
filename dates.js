@@ -20,6 +20,12 @@ export function addDays(iso, n) {
   return d.toISOString().slice(0, 10);
 }
 
+// Saturday or Sunday?
+export function isWeekend(iso) {
+  const dow = new Date(toUTC(iso)).getUTCDay();
+  return dow === 0 || dow === 6;
+}
+
 // Monday of the week containing iso
 export function weekStart(iso) {
   const dow = new Date(toUTC(iso)).getUTCDay(); // 0 = Sunday
@@ -71,6 +77,7 @@ export function periodKey(task, today) {
   if (task.start_date && today < task.start_date && task.recurrence !== 'once') return null;
   switch (task.recurrence) {
     case 'daily': return today;
+    case 'weekdays': return isWeekend(today) ? null : today;
     case 'weekly': return weekStart(today);
     case 'monthly': return today.slice(0, 7);
     case 'yearly': return today.slice(0, 4);
@@ -90,7 +97,7 @@ export function periodEnd(task, today) {
       const occ = eventOccurrence(task, today);
       return occ ? addDays(occ, -(task.days_before || 0)) : null;
     }
-    case 'daily': return today;
+    case 'daily': case 'weekdays': return today;
     case 'weekly': return addDays(weekStart(today), 6);
     case 'monthly': {
       const [y, m] = today.split('-').map(Number);
