@@ -11,7 +11,7 @@ const PARENT = ['mother', 'father'];
 
 const S = {
   session: null, me: null, family: null, members: [],
-  plans: [], tasks: [], done: [], takes: [], trackers: [], entries: [], events: [],
+  plans: [], tasks: [], done: [], takes: [], trackers: [], entries: [], events: [], points: [],
   tab: 'home', authStep: 'email', authEmail: '', setupMode: 'create', ideaShift: {}, pushOn: false,
 };
 
@@ -72,7 +72,7 @@ async function loadAll() {
   const me = await run(sb.from('members').select('*').eq('user_id', uid()).maybeSingle());
   S.me = me;
   if (!me) return;
-  const [family, members, plans, tasks, done, takes, trackers, entries, events] = await Promise.all([
+  const [family, members, plans, tasks, done, takes, trackers, entries, events, points] = await Promise.all([
     run(sb.from('families').select('*').eq('id', me.family_id).single()),
     run(sb.from('members').select('*').order('created_at')),
     run(sb.from('plans').select('*').order('created_at')),
@@ -82,8 +82,9 @@ async function loadAll() {
     run(sb.from('trackers').select('*').order('created_at')),
     run(sb.from('tracker_entries').select('*').order('done_on', { ascending: false })),
     run(sb.from('events').select('*')),
+    run(sb.rpc('points_summary')),
   ]);
-  Object.assign(S, { family, members, plans, tasks, done, takes, trackers, entries, events });
+  Object.assign(S, { family, members, plans, tasks, done, takes, trackers, entries, events, points: points || [] });
 }
 
 function isoMinus(days) {
@@ -131,6 +132,29 @@ function taskState(task) {
 function recLabel(task) {
   if (task.recurrence === 'custom') return t('everyN', task.interval_days);
   return t('rec.' + task.recurrence);
+}
+
+// Point counters: a child sees their own, parents see every child's
+function pointsCard() {
+  if (!S.points.length) return '';
+  const rows = S.points
+    .map((p) => ({ ...p, name: memberName(p.user_id), total: Number(p.total), week: Number(p.week) }))
+    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+  if (!isParent() && rows.length === 1 && rows[0].user_id === uid()) {
+    const me = rows[0];
+    return `<div class="card points solo">
+      <div class="pts-label">${esc(t('myPoints'))}</div>
+      <div class="pts-big">⭐ ${me.total}</div>
+      ${me.week ? `<div class="meta">${esc(t('weekPts', me.week))}</div>` : ''}
+    </div>`;
+  }
+  return `<div class="card points">
+    <div class="pts-label">${esc(t('kidsPoints'))}</div>
+    ${rows.map((p) => `<div class="pts-row">
+      <span class="pts-name">🧒 ${esc(p.name)}</span>
+      <span class="meta">${p.week ? esc(t('weekPts', p.week)) : ''}</span>
+      <span class="pts-n">⭐ ${p.total}</span></div>`).join('')}
+  </div>`;
 }
 
 function remindLabel(task) {
@@ -315,6 +339,7 @@ function viewHome() {
 
   return `
     <p class="hello">${esc(t('hello', { name: S.me.display_name }))}</p>
+    ${pointsCard()}
     ${due.length ? `<h2>${esc(t('timeFor'))}</h2>${due.map(({ tr, st }) => momentCard(tr, st, true)).join('')}` : ''}
     <h2>${esc(t('upcoming'))}</h2>
     ${upcoming.length ? upcoming.map(({ ev, st }) => eventRow(ev, st)).join('') : `<p class="empty">${esc(t('noUpcoming'))}</p>`}
@@ -329,6 +354,7 @@ function viewHome() {
 function taskRow(task, st, opts = {}) {
   const plan = task.plan_id && !opts.inPlan ? S.plans.find((p) => p.id === task.plan_id) : null;
   const meta = [recLabel(task)];
+  if (task.points) meta.push(`⭐ ${t('pointsN', task.points)}`);
   if (st.end && !st.done) meta.push(t('dueBy', { date: fmtDate(st.end, getLang()) }));
   if (plan) meta.push(plan.title);
   if (st.kind === 'role') meta.push(task.roles.map((r) => t('roles.' + r)).join(', '));
@@ -400,6 +426,7 @@ function viewTasks() {
   }).join('');
 
   return `
+    ${pointsCard()}
     <div class="toolbar">
       <button class="primary" data-act="newTask">＋ ${t('newTask')}</button>
       ${isParent() ? `<button data-act="newPlan">＋ ${t('newPlan')}</button>` : ''}
@@ -418,7 +445,7 @@ function taskForm(task, planId) {
   const editing = !!task;
   const tk = task || {
     title: '', notes: '', recurrence: planId ? 'daily' : 'once', interval_days: 3,
-    start_date: today(), due_date: '', need: 1, open: false, remind_time: '', remind_days_before: 0,
+    start_date: today(), due_date: '', need: 1, open: false, remind_time: '', remind_days_before: 0, points: 0,
     assignees: planId ? children().map((c) => c.user_id) : [],
     roles: planId ? [] : ['all'], plan_id: planId || null,
   };
@@ -436,6 +463,8 @@ function taskForm(task, planId) {
       <fieldset data-show="assigned"><legend>${t('assignTo')}</legend>${memberCheckboxes('assignees', assignable, tk.assignees)}</fieldset>
       <fieldset data-show="open role"><legend>${t('visibleTo')}</legend>${roleCheckboxes('roles', ITEM_ROLES, tk.roles.length ? tk.roles : ['all'])}</fieldset>
       <label data-show="open">${t('need')}<input name="need" type="number" min="1" max="20" value="${tk.need}"></label>
+      ${isParent() ? `<label>⭐ ${t('points')}<input name="points" type="number" min="0" max="1000" value="${tk.points || 0}"></label>
+      <p class="hint">${esc(t('pointsHelp'))}</p>` : ''}
       <label>${t('recurrence')}<select name="recurrence">${recs.map((r) =>
         `<option value="${r}" ${r === tk.recurrence ? 'selected' : ''}>${esc(t('rec.' + r))}</option>`).join('')}</select></label>
       <label data-rec="custom">${t('intervalN')}<input name="interval_days" type="number" min="1" value="${tk.interval_days || 3}"></label>
@@ -481,6 +510,8 @@ function taskForm(task, planId) {
       remind_time: f.get('remind_time') || null,
       remind_days_before: Math.min(60, Math.max(0, Number(f.get('remind_days_before')) || 0)),
     };
+    // only parents can set points; a child editing keeps whatever was there
+    if (isParent()) row.points = Math.min(1000, Math.max(0, Math.round(Number(f.get('points')) || 0)));
     if (!row.title) return toast(t('needTitle'), true);
     if (k === 'assigned' && !row.assignees.length) return toast(t('assignTo') + '?', true);
     if (k !== 'assigned' && !row.roles.length) return toast(t('needRole'), true);
@@ -766,7 +797,7 @@ const ACTIONS = {
     const task = byId(S.tasks, id); const st = taskState(task);
     if (st.kind === 'open' && !st.took) return toast(t('takeFirst'), true);
     await run(sb.from('task_done').insert({ task_id: id, period: st.period, done_on: today() }));
-    toast('✓'); await refresh();
+    toast(task.points ? `+${task.points} ⭐` : '✓'); await refresh();
   },
   undo: async (id) => {
     const task = byId(S.tasks, id);

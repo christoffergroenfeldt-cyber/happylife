@@ -424,9 +424,85 @@ create table if not exists reminders_sent (
 );
 alter table reminders_sent enable row level security;
 
+-- ---------------------------------------------------------------- points
+-- A parent can give a task points. Whoever ticks it off earns them. The
+-- database writes them to points_log when the task is ticked off (not the
+-- app), so nobody can award themselves extra, changing a task's points later
+-- doesn't rewrite history, and deleting an old task keeps the points earned.
+-- Undoing a tick removes its points again.
+
+alter table tasks add column if not exists points int not null default 0
+  check (points between 0 and 1000);
+
+create table if not exists points_log (
+  task_done_id uuid primary key,          -- no foreign key: survives task deletion
+  user_id      uuid not null references auth.users on delete cascade,
+  family_id    uuid not null references families on delete cascade,
+  points       int not null,
+  title        text not null,
+  done_on      date not null,
+  created_at   timestamptz not null default now()
+);
+create index if not exists points_log_user on points_log(user_id, done_on);
+alter table points_log enable row level security;  -- read through points_summary() only
+
+create or replace function task_done_points() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'INSERT' then
+    insert into points_log(task_done_id, user_id, family_id, points, title, done_on)
+      select new.id, new.done_by, t.family_id, t.points, t.title, new.done_on
+      from tasks t where t.id = new.task_id and t.points > 0
+    on conflict do nothing;
+    return new;
+  end if;
+  -- DELETE: an undo while the task still exists takes the points back;
+  -- a delete caused by removing the whole task keeps them.
+  if exists (select 1 from tasks where id = old.task_id) then
+    delete from points_log where task_done_id = old.id;
+  end if;
+  return old;
+end $$;
+drop trigger if exists task_done_points on task_done;
+create trigger task_done_points after insert or delete on task_done
+  for each row execute function task_done_points();
+
+-- Only parents may put points on a task (re-creates the task write policies)
+drop policy if exists tasks_insert on tasks;
+create policy tasks_insert on tasks for insert with check (
+  family_id = my_family() and created_by = auth.uid()
+  and all_in_my_family(assignees)
+  and (assignees <@ array[auth.uid()] or i_am_parent())
+  and (plan_id is null or i_am_parent())
+  and (points = 0 or i_am_parent()));
+drop policy if exists tasks_update on tasks;
+create policy tasks_update on tasks for update
+  using (family_id = my_family() and task_visible(roles, assignees, created_by)
+         and (created_by = auth.uid() or i_am_parent()))
+  with check (family_id = my_family() and all_in_my_family(assignees)
+         and (assignees <@ array[auth.uid()] or i_am_parent())
+         and (plan_id is null or i_am_parent())
+         and (points = 0 or i_am_parent()));
+
+-- Point counters: a child sees their own, parents see every child's.
+-- `week` counts from Monday (Danish time).
+create or replace function points_summary()
+returns table (user_id uuid, total bigint, week bigint)
+language sql stable security definer set search_path = public as $$
+  select m.user_id,
+         coalesce(sum(p.points), 0),
+         coalesce(sum(p.points) filter (where p.done_on >=
+           date_trunc('week', (now() at time zone 'Europe/Copenhagen'))::date), 0)
+  from members m
+  left join points_log p on p.user_id = m.user_id and p.family_id = m.family_id
+  where m.family_id = my_family() and 'child' = any(m.roles)
+    and (i_am_parent() or m.user_id = auth.uid())
+  group by m.user_id
+$$;
+
 revoke execute on function create_family(text,text,text[],text), join_family(text,text,text[]),
   set_member_roles(uuid,text[],boolean), rename_me(text), new_invite_code(), take_task(uuid,text),
-  save_push(text,text,text,text) from anon, public;
+  save_push(text,text,text,text), points_summary() from anon, public;
 grant execute on function create_family(text,text,text[],text), join_family(text,text,text[]),
   set_member_roles(uuid,text[],boolean), rename_me(text), new_invite_code(), take_task(uuid,text),
-  save_push(text,text,text,text) to authenticated;
+  save_push(text,text,text,text), points_summary() to authenticated;

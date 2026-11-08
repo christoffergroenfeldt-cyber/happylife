@@ -13,6 +13,7 @@ Danish, English and French – switch on the login screen or under **Family → 
 | **Roles** | Each person has one or more roles: child, mother, father, husband, wife. Everything is assigned to roles or people, and the database only returns what your roles may see. |
 | **Plans** | Mother/father create plans (e.g. "Morning routine") with tasks assigned to specific children – daily, weekly, monthly, yearly, once, or every X days. Each child ticks off their own; parents see ✓/○ per child. |
 | **Family tasks** | Open to everyone (or chosen roles), with "people needed". Anyone takes it for the current period; it's full when enough have taken it, and done when a taker ticks it. Like HØBK activities. |
+| **Points** | A parent can give a task points (0–1000). Whoever ticks it off earns them; undo takes them back. Each child sees their own ⭐ counter on Home and Tasks, parents see every child's, with this week's points too. Points are kept even if the task is later deleted. |
 | **Role tasks** | E.g. a husband-only task – invisible to the wife and children. |
 | **Moments** | "When did I last …" – each with its own reminder interval in days. When the days have passed it appears on Home under *Time for something special* with an idea. Defaults on a new family: flowers + surprise (husband), surprise (wife), out together + trip together (both). |
 | **Calendar** | Vacations, anniversaries, birthdays. Yearly events show how many years; each shows on Home a chosen number of days before. |
@@ -95,5 +96,5 @@ code (e.g. a parent's address with `+` – `mum+anna@gmail.com` – on Gmail).
 
 ## Ideas for later
 - Push notifications when a moment is due (the `remind` function can do this the same way)
-- Points/rewards for children's plan tasks
+- Rewards to spend points on
 - Shared shopping list
