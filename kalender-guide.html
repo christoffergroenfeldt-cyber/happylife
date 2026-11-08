@@ -41,17 +41,37 @@
     button.mini { border-radius: 8px; border: 1px solid var(--line); background: var(--bg); font-weight: 700; padding: 2px 8px; font-size: .8rem; }
     a.back { color: var(--accent); font-weight: 700; text-decoration: none; }
     ul.plain { margin: 6px 0 0; padding-left: 20px; }
+    .guide a:not(.back) { color: var(--accent); font-weight: 700; }
   </style>
 </head>
 <body>
 <main class="guide">
   <a class="back" href="./">← Happy Life</a>
   <h1>📱 Kalender fra iPhone</h1>
-  <p class="lede">Byg genvejen én gang (ca. 10 minutter). Derefter henter den selv fødselsdage og mærkedage ind i Happy Life hver dag. Kun kalendere, du slår til i appen, bliver gemt.</p>
+  <p class="lede">Lav genvejen én gang (3–10 minutter). Derefter henter den selv fødselsdage og mærkedage ind i Happy Life hver dag. Kun kalendere, du slår til i appen, bliver gemt.</p>
 
   <div class="tip warn nocode">⚠️ Åbn denne side fra appen (Familie → Kalender fra iPhone → <b>Sådan laver du genvejen</b>), så står din personlige kode klar herunder.</div>
 
-  <h2>Før du starter</h2>
+  <h2>Hurtig vej: kopiér Friends Sync</h2>
+  <p class="lede">Har du allerede genvejen <b>Friends Sync</b>, så lav en kopi og ret 5 ting (ca. 3 minutter). Ellers spring ned til <a href="#byg">Byg den fra bunden</a>.</p>
+  <ol class="steps">
+    <li>I <b>Genveje</b>: hold fingeren på <b>Friends Sync</b> → <b>Dupliker</b>. Åbn kopien, tryk på navnet øverst og omdøb den til <b>Happy Life Sync</b> <button class="mini" data-copy-text="Happy Life Sync">Kopiér navn</button>
+      <div class="en">Shortcuts → long-press → Duplicate → rename</div></li>
+    <li>Første <span class="act">Tekst</span>: slet Friends-koden og indsæt din Happy Life-kode:
+      <div class="val"><code id="code2">—</code><button data-copy="code2">Kopiér</button></div></li>
+    <li><span class="act">Find kalenderbegivenheder</span>: ret <b>90 dage</b> til <b>365 dage</b> (så fødselsdage et helt år frem kommer med).</li>
+    <li>Lige under <span class="act">Find kalenderbegivenheder</span>: tilføj <span class="act">Tekst</span> → vælg <b>Kalenderbegivenheder</b>, tryk på den igen og vælg <b>Titel</b>. Tilføj så <span class="act">Angiv variabel</span> og kald den <b>Titler</b>.
+      <div class="en">Friends sender ikke titler – Happy Life skal bruge dem til at se, hvis fødselsdag det er.</div></li>
+    <li><span class="act">Hent indholdet af URL</span>: erstat adressen med
+      <div class="val"><code id="url2"></code><button data-copy="url2">Kopiér</button></div>
+      Under <b>Overskrifter</b>: erstat værdien af <b>apikey</b> med
+      <div class="val"><code id="key2"></code><button data-copy="key2">Kopiér</button></div>
+      Under <b>Anmodningsbrødtekst</b>: tilføj et <b>Tekst</b>-felt <b>p_titles</b> <button class="mini" data-copy-text="p_titles">Kopiér navn</button> med variablen <b>Titler</b>. De andre fem felter (p_token, p_starts, p_ends, p_allday, p_calendars) passer allerede.</li>
+  </ol>
+  <div class="tip">Kør den (▶︎) og fortsæt ved <a href="#kor">Kør den første gang</a>. Friends Sync er urørt og virker som før.</div>
+
+  <h2 id="byg" style="margin-top:34px">Byg den fra bunden</h2>
+  <h3 style="margin:8px 0 10px">Før du starter</h3>
   <ol class="steps">
     <li>Åbn <b>Indstillinger → Apps → Genveje → Avanceret</b> og slå <b>Tillad deling af store mængder data</b> til.
       <div class="en">Settings → Apps → Shortcuts → Advanced → Allow Sharing Large Amounts of Data</div></li>
@@ -92,7 +112,7 @@
     <li><span class="act">Vis meddelelse</span> <span class="en">(Show Notification)</span> – med variablen <b>Indholdet af URL</b>.</li>
   </ol>
 
-  <h2>Kør den første gang</h2>
+  <h2 id="kor">Kør den første gang</h2>
   <ol class="steps">
     <li>Tryk ▶︎. Tillad adgang til <b>Kalendere</b>, og vælg <b>Tillad altid</b>, når den spørger om at forbinde til supabase.co.</li>
     <li>Meddelelsen skriver fx <i>"Happy Life: 3 begivenheder fra 1 af 6 kalendere."</i></li>
@@ -117,10 +137,10 @@
 <script type="module">
   import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
   const code = new URLSearchParams(location.hash.slice(1)).get('kode') || '';
-  document.getElementById('code').textContent = code || '— åbn siden fra appen —';
+  for (const id of ['code', 'code2']) document.getElementById(id).textContent = code || '— åbn siden fra appen —';
   if (!code) document.body.classList.add('no-code');
-  document.getElementById('url').textContent = `${SUPABASE_URL}/rest/v1/rpc/sync_calendar`;
-  document.getElementById('key').textContent = SUPABASE_ANON_KEY;
+  for (const id of ['url', 'url2']) document.getElementById(id).textContent = `${SUPABASE_URL}/rest/v1/rpc/sync_calendar`;
+  for (const id of ['key', 'key2']) document.getElementById(id).textContent = SUPABASE_ANON_KEY;
   const flash = (btn) => { const t = btn.textContent; btn.textContent = 'Kopieret ✓'; btn.classList.add('done');
     setTimeout(() => { btn.textContent = t; btn.classList.remove('done'); }, 1500); };
   const copy = async (text, btn) => {
@@ -131,7 +151,7 @@
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.copy) {
       const v = document.getElementById(b.dataset.copy).textContent;
-      if (b.dataset.copy === 'code' && !code) return;
+      if (b.dataset.copy.startsWith('code') && !code) return;
       copy(v, b);
     } else if (b.dataset.copyText) copy(b.dataset.copyText, b);
   });

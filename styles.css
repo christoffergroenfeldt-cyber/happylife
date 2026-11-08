@@ -40,13 +40,12 @@
 * { box-sizing: border-box; }
 html { background: var(--bg); }
 html, body { margin: 0; color: var(--ink); }
-/* the sun in the top right corner */
-/* sits behind everything (z-index -1) and scrolls away with the page */
-body { position: relative; overflow-x: clip; }
+/* the sun: drawn inside the screen (no sideways scroll), behind everything, scrolls away with the page */
+body { position: relative; }
 body::before {
   content: ''; position: absolute; z-index: -1; pointer-events: none;
-  top: -150px; right: -130px; width: 360px; height: 360px; border-radius: 50%;
-  background: radial-gradient(circle at 50% 50%, var(--sun3) 0 85px, var(--sun2) 86px 130px, var(--sun1) 131px 180px);
+  top: 0; right: 0; width: 230px; height: 210px;
+  background: radial-gradient(circle at 180px 30px, var(--sun3) 0 85px, var(--sun2) 86px 130px, var(--sun1) 131px 180px, transparent 181px);
 }
 body {
   font: 16px/1.45 'Nunito', system-ui, -apple-system, sans-serif;
