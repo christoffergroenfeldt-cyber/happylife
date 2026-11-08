@@ -1,6 +1,6 @@
 // Happy Life – main app
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, VAPID_PUBLIC_KEY } from './config.js';
 import { t, setLang, getLang, LANGS, IDEAS } from './i18n.js';
 import { todayISO, daysBetween, trackerStatus, eventStatus, periodKey, periodEnd, fmtDate } from './dates.js';
 
@@ -12,7 +12,7 @@ const PARENT = ['mother', 'father'];
 const S = {
   session: null, me: null, family: null, members: [],
   plans: [], tasks: [], done: [], takes: [], trackers: [], entries: [], events: [],
-  tab: 'home', authStep: 'email', authEmail: '', setupMode: 'create', ideaShift: {},
+  tab: 'home', authStep: 'email', authEmail: '', setupMode: 'create', ideaShift: {}, pushOn: false,
 };
 
 const app = document.getElementById('app');
@@ -131,6 +131,53 @@ function taskState(task) {
 function recLabel(task) {
   if (task.recurrence === 'custom') return t('everyN', task.interval_days);
   return t('rec.' + task.recurrence);
+}
+
+function remindLabel(task) {
+  if (!task.remind_time) return '';
+  const before = task.remind_days_before || 0;
+  return `🔔 ${task.remind_time.slice(0, 5)}${before ? `, ${t('daysBefore', before)}` : ''}`;
+}
+
+// ------------------------------------------------------------ push notifications
+// Same approach as the Friends app: web push via the `remind` Edge Function.
+
+const isStandalone = () => window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone === true;
+const pushSupported = () => !!VAPID_PUBLIC_KEY && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
+function urlB64ToUint8Array(b64) {
+  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+// Save this phone's subscription for the signed-in person (also updates the language)
+async function subscribePush() {
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(VAPID_PUBLIC_KEY) });
+  const j = sub.toJSON();
+  const { error } = await sb.rpc('save_push', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_lang: getLang() });
+  if (error) throw error;
+  S.pushOn = true;
+}
+
+// Already allowed on this phone? Then (re)connect silently – no tap needed.
+async function ensurePush() {
+  if (!S.me || !pushSupported() || Notification.permission !== 'granted') return;
+  try { await subscribePush(); } catch (e) { console.warn('push subscribe failed', e); }
+}
+
+function pushSection() {
+  let inner;
+  if (!pushSupported()) inner = `<p class="hint">${esc(t('pushNotSupported'))}</p>`;
+  else if (!isStandalone()) inner = `<p class="hint">${esc(t('pushHome'))}</p>`;
+  else if (Notification.permission === 'denied') inner = `<p class="hint">${esc(t('pushBlocked'))}</p>`;
+  else if (S.pushOn) inner = `<p>${esc(t('pushOnText'))}</p>
+    <button class="small" data-act="pushTest">${t('pushTest')}</button>`;
+  else inner = `<p class="meta">${esc(t('pushWhy'))}</p>
+    <button class="primary" data-act="pushEnable">${t('pushEnable')}</button>`;
+  return `<h2>${esc(t('notifications'))}</h2><div class="card">${inner}</div>`;
 }
 
 // ------------------------------------------------------------ render root
@@ -285,6 +332,7 @@ function taskRow(task, st, opts = {}) {
   if (st.end && !st.done) meta.push(t('dueBy', { date: fmtDate(st.end, getLang()) }));
   if (plan) meta.push(plan.title);
   if (st.kind === 'role') meta.push(task.roles.map((r) => t('roles.' + r)).join(', '));
+  if (task.remind_time && !st.done) meta.push(remindLabel(task));
 
   let actions = '';
   let extra = '';
@@ -370,7 +418,7 @@ function taskForm(task, planId) {
   const editing = !!task;
   const tk = task || {
     title: '', notes: '', recurrence: planId ? 'daily' : 'once', interval_days: 3,
-    start_date: today(), due_date: '', need: 1, open: false,
+    start_date: today(), due_date: '', need: 1, open: false, remind_time: '', remind_days_before: 0,
     assignees: planId ? children().map((c) => c.user_id) : [],
     roles: planId ? [] : ['all'], plan_id: planId || null,
   };
@@ -393,6 +441,14 @@ function taskForm(task, planId) {
       <label data-rec="custom">${t('intervalN')}<input name="interval_days" type="number" min="1" value="${tk.interval_days || 3}"></label>
       <label data-rec="daily weekly monthly yearly custom">${t('startDate')}<input name="start_date" type="date" value="${tk.start_date}"></label>
       <label data-rec="once">${t('due')}<input name="due_date" type="date" value="${tk.due_date || ''}"></label>
+      <fieldset><legend>🔔 ${t('reminder')}</legend>
+        <div class="two">
+          <label>${t('remindAt')}<input name="remind_time" type="time" value="${esc((tk.remind_time || '').slice(0, 5))}"></label>
+          <label>${t('daysBeforeDue')}<input name="remind_days_before" type="number" min="0" max="60" value="${tk.remind_days_before || 0}"></label>
+        </div>
+        <p class="hint" data-rec="once">${esc(t('reminderHelpOnce'))}</p>
+        <p class="hint" data-rec="daily weekly monthly yearly custom">${esc(t('reminderHelp'))}</p>
+      </fieldset>
       <div class="btns">
         ${editing ? `<button type="button" class="danger" data-act="delTask" data-id="${task.id}">${t('delete')}</button>` : ''}
         <span class="grow"></span>
@@ -422,6 +478,8 @@ function taskForm(task, planId) {
       assignees: k === 'assigned' ? f.getAll('assignees') : [],
       roles: k === 'assigned' ? (isParent() ? PARENT : []) : f.getAll('roles'),
       plan_id: tk.plan_id,
+      remind_time: f.get('remind_time') || null,
+      remind_days_before: Math.min(60, Math.max(0, Number(f.get('remind_days_before')) || 0)),
     };
     if (!row.title) return toast(t('needTitle'), true);
     if (k === 'assigned' && !row.assignees.length) return toast(t('assignTo') + '?', true);
@@ -637,6 +695,7 @@ function viewFamily() {
     <h2>${esc(t('myName'))}</h2>
     <form class="inline" id="nameForm"><input name="name" value="${esc(S.me.display_name)}" required>
       <button type="submit">${t('save')}</button></form>
+    ${pushSection()}
     <h2>${esc(t('language'))}</h2>
     ${langPicker()}
     <button class="link out" data-act="signOut">${t('signOut')}</button>`;
@@ -679,7 +738,21 @@ const byId = (list, id, key = 'id') => list.find((x) => x[key] === id);
 
 const ACTIONS = {
   tab: (id) => { S.tab = id; render(); window.scrollTo(0, 0); },
-  lang: (id) => { store('hl-lang', id); setLang(id); render(); },
+  lang: (id) => {
+    store('hl-lang', id); setLang(id); render();
+    if (S.pushOn) subscribePush().catch(() => {}); // notifications follow the language
+  },
+  pushEnable: async () => {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { render(); return toast(t('pushBlocked'), true); }
+    try { await subscribePush(); } catch (e) { console.error(e); return toast(`${t('error')}: ${e.message}`, true); }
+    toast(t('pushEnabled')); render();
+  },
+  pushTest: async () => {
+    const { data, error } = await sb.functions.invoke('remind', { body: { test: true } });
+    if (error) { console.error(error); return toast(`${t('error')}: ${error.message}`, true); }
+    toast(data?.sent ? t('testSent') : t('testNone'), !data?.sent);
+  },
   otherEmail: () => { S.authStep = 'email'; render(); },
   setupMode: (id) => { S.setupMode = id; render(); },
   signOut: async () => { await sb.auth.signOut(); },
@@ -777,14 +850,17 @@ document.addEventListener('visibilitychange', () => {
   S.session = data.session;
   if (S.session) { try { await loadAll(); } catch { /* shown */ } }
   render();
+  ensurePush().then(() => { if (S.pushOn && S.tab === 'family') render(); });
   sb.auth.onAuthStateChange(async (event, session) => {
     if (event === 'TOKEN_REFRESHED') { S.session = session; return; }
     if (event === 'INITIAL_SESSION') return;
     S.session = session;
     S.me = null;
+    S.pushOn = false;
     S.authStep = 'email';
     if (session) { try { await loadAll(); } catch { /* shown */ } }
     render();
+    ensurePush();
   });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
 })();

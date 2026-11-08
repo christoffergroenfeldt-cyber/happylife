@@ -373,7 +373,60 @@ begin
   insert into task_takes(task_id, period, user_id) values (p_task, p_period, auth.uid());
 end $$;
 
+-- ---------------------------------------------------------------- reminders
+-- A task can have a reminder: a time of day and how many days before the
+-- deadline. The deadline is the last day of the task's period (daily: that
+-- day, weekly: Sunday, monthly: last day of the month, yearly: 31 Dec,
+-- every X days: last day of the interval, once: the due date).
+-- The `remind` Edge Function (run every 5 minutes, see cron.sql) sends each
+-- reminder once as a push notification to the people who still have to do it.
+
+alter table tasks add column if not exists remind_time time;
+alter table tasks add column if not exists remind_days_before int not null default 0
+  check (remind_days_before between 0 and 60);
+
+-- One row per phone that has turned on notifications
+create table if not exists push_subscriptions (
+  id         bigserial primary key,
+  user_id    uuid not null references auth.users on delete cascade,
+  endpoint   text not null unique,
+  p256dh     text not null,
+  auth       text not null,
+  lang       text not null default 'da',
+  created_at timestamptz not null default now()
+);
+alter table push_subscriptions enable row level security;
+drop policy if exists push_select on push_subscriptions;
+create policy push_select on push_subscriptions for select using (user_id = auth.uid());
+drop policy if exists push_delete on push_subscriptions;
+create policy push_delete on push_subscriptions for delete using (user_id = auth.uid());
+
+-- Save this phone's subscription for me (replaces it if another family
+-- member used to be signed in on the same phone)
+create or replace function save_push(p_endpoint text, p_p256dh text, p_auth text, p_lang text default 'da')
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  delete from push_subscriptions where endpoint = p_endpoint;
+  insert into push_subscriptions(user_id, endpoint, p256dh, auth, lang)
+    values (auth.uid(), p_endpoint, p_p256dh, p_auth,
+            case when p_lang in ('da','en','fr') then p_lang else 'da' end);
+end $$;
+
+-- Which reminders have been sent (so each goes out once). Only the server
+-- function reads and writes it: RLS on with no policies blocks the app.
+create table if not exists reminders_sent (
+  task_id  uuid not null references tasks on delete cascade,
+  period   text not null,
+  user_id  uuid not null references auth.users on delete cascade,
+  sent_at  timestamptz not null default now(),
+  primary key (task_id, period, user_id)
+);
+alter table reminders_sent enable row level security;
+
 revoke execute on function create_family(text,text,text[],text), join_family(text,text,text[]),
-  set_member_roles(uuid,text[],boolean), rename_me(text), new_invite_code(), take_task(uuid,text) from anon, public;
+  set_member_roles(uuid,text[],boolean), rename_me(text), new_invite_code(), take_task(uuid,text),
+  save_push(text,text,text,text) from anon, public;
 grant execute on function create_family(text,text,text[],text), join_family(text,text,text[]),
-  set_member_roles(uuid,text[],boolean), rename_me(text), new_invite_code(), take_task(uuid,text) to authenticated;
+  set_member_roles(uuid,text[],boolean), rename_me(text), new_invite_code(), take_task(uuid,text),
+  save_push(text,text,text,text) to authenticated;

@@ -45,7 +45,30 @@ Row Level Security protects the data.
 Repo **Settings → Pages** → Source: *Deploy from a branch* → `main` / root → Save.
 After a minute the app is at `https://christoffergroenfeldt-cyber.github.io/happylife/`.
 
-### 4. The family
+### 4. Reminders (push notifications)
+A task can have a reminder: a time of day and how many days before the deadline. The
+deadline is the last day of the task's period (daily: that day, weekly: Sunday, monthly:
+last day of the month, yearly: 31 Dec, once: the due date). Every 5 minutes the `remind`
+Edge Function sends due reminders once, to the people who still have to do the task.
+
+1. **Edge Functions → Secrets** – add:
+   | Name | Value |
+   |---|---|
+   | `VAPID_PUBLIC_KEY` | the key in `config.js` |
+   | `VAPID_PRIVATE_KEY` | the private key that goes with it (never commit it) |
+   | `VAPID_SUBJECT` | `mailto:` + your email |
+   | `APP_URL` | `https://christoffergroenfeldt-cyber.github.io/happylife/` |
+2. **Edge Functions → Deploy a new function → Via editor**: name `remind`, paste
+   `supabase/functions/remind/index.ts`, deploy (keep **Verify JWT** on).
+3. **SQL Editor**: run `cron.sql` once (runs the function every 5 minutes).
+
+Each person turns notifications on in the app under **Family → Notifications**. On iPhone this
+only works when the app is added to the Home Screen and opened from there (iOS 16.4+).
+
+To make new VAPID keys: `npx web-push generate-vapid-keys`, put the public key in
+`config.js` and both keys in the secrets.
+
+### 5. The family
 1. Open the link in Safari → enter your email → enter the code from the email →
    **Create family** → pick your roles (e.g. father + husband).
 2. **Family** tab shows the invite code. Each family member signs in the same way and
@@ -65,9 +88,12 @@ code (e.g. a parent's address with `+` – `mum+anna@gmail.com` – on Gmail).
 | `dates.js` | Period and reminder calculations |
 | `config.js` | Your Supabase URL and anon key |
 | `schema.sql` | Database, security rules and functions – safe to re-run |
-| `sw.js`, `manifest.json`, icons | Home-screen app and offline shell |
+| `sw.js`, `manifest.json`, icons | Home-screen app, offline shell, showing notifications |
+| `supabase/functions/remind/index.ts` | Edge Function that sends task reminders |
+| `cron.sql` | Runs the reminder function every 5 minutes |
+| `tests/remind.test.mjs` | Tests for the reminder rules: `node --test tests/remind.test.mjs` |
 
 ## Ideas for later
-- Push notifications on iPhone when a moment is due (web push + a small scheduled job)
+- Push notifications when a moment is due (the `remind` function can do this the same way)
 - Points/rewards for children's plan tasks
 - Shared shopping list
