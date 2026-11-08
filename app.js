@@ -171,16 +171,16 @@ function pointsCard() {
     const me = rows[0];
     return `<div class="card points solo">
       <div class="pts-label">${esc(t('myPoints'))}</div>
-      <div class="pts-big">⭐ ${me.total}</div>
+      <div class="pts-big">★ ${me.total}</div>
       ${me.week ? `<div class="meta">${esc(t('weekPts', me.week))}</div>` : ''}
     </div>`;
   }
   return `<div class="card points">
     <div class="pts-label">${esc(t('kidsPoints'))}</div>
     ${rows.map((p) => `<div class="pts-row">
-      <span class="pts-name">🧒 ${esc(p.name)}</span>
+      <span class="pts-name">${esc(p.name)}</span>
       <span class="meta">${p.week ? esc(t('weekPts', p.week)) : ''}</span>
-      <span class="pts-n">⭐ ${p.total}</span></div>`).join('')}
+      <span class="pts-n">★ ${p.total}</span></div>`).join('')}
   </div>`;
 }
 
@@ -238,7 +238,14 @@ function render() {
   if (!S.session) return renderAuth();
   if (!S.me) return renderSetup();
   const tabs = ['home', 'tasks', 'moments', 'calendar', 'family'];
-  const icons = { home: '🏠', tasks: '✅', moments: '💛', calendar: '📅', family: '👪' };
+  const svg = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
+  const icons = {
+    home: svg('<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>'),
+    tasks: svg('<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.5 12l2.5 2.5 4.5-5"/>'),
+    moments: svg('<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>'),
+    calendar: svg('<rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/>'),
+    family: svg('<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2A4.5 4.5 0 0 1 21 18.5"/>'),
+  };
   const views = { home: viewHome, tasks: viewTasks, moments: viewMoments, calendar: viewCalendar, family: viewFamily };
   app.innerHTML = `
     <header class="top"><h1>${esc(t('tabs.' + S.tab))}</h1><span class="fam">${esc(S.family?.name)}</span></header>
