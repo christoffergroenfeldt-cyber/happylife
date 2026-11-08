@@ -806,3 +806,74 @@ revoke execute on function sync_calendar(text,text,text,text,text,text), my_sync
   cal_ext_key(text,date,boolean), cal_guess_type(text,text) from public, anon, authenticated;
 grant execute on function sync_calendar(text,text,text,text,text,text) to anon, authenticated;
 grant execute on function my_sync_token(boolean), set_calendar(uuid,boolean,boolean) to authenticated;
+
+-- ================================================================ login codes
+-- Sign in on another device with a short code made on a device where you are
+-- already signed in. Valid 10 minutes, works once. Only a hash is stored.
+-- The `login-code` Edge Function redeems it (service role) and hands the new
+-- device a one-time sign-in token. Wrong guesses are throttled.
+
+create table if not exists login_codes (
+  code_hash  text primary key,
+  user_id    uuid not null references auth.users on delete cascade,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+alter table login_codes enable row level security;   -- server only
+
+create table if not exists login_code_failures (
+  id bigserial primary key,
+  at timestamptz not null default now()
+);
+alter table login_code_failures enable row level security;   -- server only
+
+-- Make a code for me: 8 characters without look-alikes (no 0/O, 1/I/L)
+create or replace function create_login_code()
+returns json language plpgsql security definer set search_path = public as $$
+declare
+  alphabet constant text := 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';  -- 31 characters
+  hex text := replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', '');
+  code text := '';
+  i int; b int;
+  exp timestamptz := now() + interval '10 minutes';
+begin
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  -- rejection sampling over random bytes keeps every character equally likely
+  i := 1;
+  while length(code) < 8 loop
+    if i > length(hex) - 1 then
+      hex := replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''); i := 1;
+    end if;
+    b := ('x' || substr(hex, i, 2))::bit(8)::int;
+    i := i + 2;
+    continue when b >= 248;            -- 248 = 31 * 8
+    code := code || substr(alphabet, b % 31 + 1, 1);
+  end loop;
+  delete from login_codes where user_id = auth.uid() or expires_at < now();
+  insert into login_codes(code_hash, user_id, expires_at)
+    values (encode(sha256(convert_to(code, 'UTF8')), 'hex'), auth.uid(), exp);
+  return json_build_object('code', code, 'expires_at', exp);
+end $$;
+
+-- Redeem a code (only the Edge Function can call this). Returns the user id,
+-- or null. Throttled: after 30 wrong codes in 15 minutes everyone waits.
+create or replace function redeem_login_code(p_code text)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare
+  c text := upper(regexp_replace(coalesce(p_code, ''), '[^A-Za-z0-9]', '', 'g'));
+  uid uuid;
+begin
+  delete from login_code_failures where at < now() - interval '1 day';
+  if (select count(*) from login_code_failures where at > now() - interval '15 minutes') >= 30 then
+    raise exception 'too many attempts';
+  end if;
+  delete from login_codes
+   where code_hash = encode(sha256(convert_to(c, 'UTF8')), 'hex') and expires_at > now()
+   returning user_id into uid;
+  if uid is null then insert into login_code_failures default values; end if;
+  return uid;
+end $$;
+
+revoke execute on function create_login_code(), redeem_login_code(text) from public, anon, authenticated;
+grant execute on function create_login_code() to authenticated;
+grant execute on function redeem_login_code(text) to service_role;

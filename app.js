@@ -12,7 +12,7 @@ const PARENT = ['mother', 'father'];
 const S = {
   session: null, me: null, family: null, members: [],
   plans: [], tasks: [], done: [], takes: [], trackers: [], entries: [], events: [], points: [],
-  sync: null, calendars: [],
+  sync: null, calendars: [], loginCode: null,
   tab: 'home', authStep: 'email', authEmail: '', setupMode: 'create', ideaShift: {}, pushOn: false,
 };
 
@@ -259,7 +259,7 @@ function renderAuth() {
   app.innerHTML = `
     <div class="center">
       <div class="brand"><div class="logo">💛</div><h1>${t('appName')}</h1><p>${esc(t('tagline'))}</p></div>
-      ${codeStep ? `
+      ${S.authStep === 'login' ? '' : codeStep ? `
       <form class="card" id="codeForm">
         <p class="hint">${esc(t('codeSent', { email: S.authEmail }))}</p>
         <label>${t('code')}<input name="code" class="otp" type="text" inputmode="numeric"
@@ -273,11 +273,40 @@ function renderAuth() {
         <button class="primary" type="submit">${t('sendCode')}</button>
         <p class="hint">${esc(t('noPassword'))}</p>
       </form>`}
+      ${S.authStep === 'login' ? `
+      <form class="card" id="loginCodeForm">
+        <p class="hint">${esc(t('loginCodeHelp'))}</p>
+        <label>${t('loginCode')}<input name="code" class="otp" type="text" autocapitalize="characters"
+          autocomplete="off" autocorrect="off" spellcheck="false" maxlength="9" placeholder="ABCD-EFGH" required></label>
+        <button class="primary" type="submit">${t('signIn')}</button>
+        <button class="link" type="button" data-act="otherEmail">${t('useEmail')}</button>
+      </form>` : `<button class="link" type="button" data-act="useLoginCode">📲 ${t('haveLoginCode')}</button>`}
       ${langPicker()}
     </div>`;
 
   const busy = (e, on) => { if (e.submitter) e.submitter.disabled = on; };
-  if (codeStep) {
+  if (S.authStep === 'login') {
+    const form = document.getElementById('loginCodeForm');
+    form.elements.code.focus();
+    form.elements.code.oninput = (e) => { // ABCDEFGH -> ABCD-EFGH while typing
+      const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+      e.target.value = v.length > 4 ? `${v.slice(0, 4)}-${v.slice(4)}` : v;
+    };
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      busy(e, true);
+      const { data, error } = await sb.functions.invoke('login-code', { body: { code: form.elements.code.value } });
+      let reason = data?.error;
+      if (error) reason = (await error.context?.json?.().catch(() => null))?.error || 'server';
+      if (!reason && data?.token_hash) {
+        const { error: e2 } = await sb.auth.verifyOtp({ token_hash: data.token_hash, type: 'magiclink' });
+        if (!e2) return; // onAuthStateChange takes over
+        console.error(e2); reason = 'server';
+      }
+      toast(t({ invalid: 'loginCodeWrong', too_many: 'loginCodeTooMany' }[reason] || 'loginCodeError'), true);
+      busy(e, false);
+    };
+  } else if (codeStep) {
     const form = document.getElementById('codeForm');
     form.elements.code.focus();
     form.onsubmit = async (e) => {
@@ -816,13 +845,32 @@ function viewFamily() {
     <form class="inline" id="nameForm"><input name="name" value="${esc(S.me.display_name)}" required>
       <button type="submit">${t('save')}</button></form>
     ${pushSection()}
+    ${loginCodeSection()}
     ${calendarSection()}
     <h2>${esc(t('language'))}</h2>
     ${langPicker()}
     <button class="link out" data-act="signOut">${t('signOut')}</button>`;
 }
 
-const SHORTCUT_GUIDE = 'https://github.com/christoffergroenfeldt-cyber/happylife#calendar-from-iphone-shortcut';
+// A short code that signs this account in on another device (valid 10 minutes, once)
+function loginCodeSection() {
+  const lc = S.loginCode && new Date(S.loginCode.expires_at) > new Date() ? S.loginCode : null;
+  const until = lc ? new Date(lc.expires_at).toLocaleTimeString(
+    { da: 'da-DK', en: 'en-GB', fr: 'fr-FR' }[getLang()], { hour: '2-digit', minute: '2-digit' }) : '';
+  return `
+    <h2>📲 ${esc(t('otherDevice'))}</h2>
+    <div class="card">
+      ${lc ? `
+        <div class="code login-code">${esc(lc.code.slice(0, 4))}-${esc(lc.code.slice(4))}</div>
+        <p class="meta">${esc(t('loginCodeValid', { time: until }))}</p>
+        <p class="hint">${esc(t('loginCodeHow'))}</p>
+        <button type="button" class="small" data-act="makeLoginCode">${t('newLoginCode')}</button>`
+      : `<p class="meta">${esc(t('otherDeviceHelp'))}</p>
+        <button type="button" class="primary" data-act="makeLoginCode">${t('makeLoginCode')}</button>`}
+    </div>`;
+}
+
+const SHORTCUT_GUIDE ='https://github.com/christoffergroenfeldt-cyber/happylife#calendar-from-iphone-shortcut';
 
 // Parents: personal sync code for the iPhone Shortcut, and which phone calendars to import
 function calendarSection() {
@@ -909,6 +957,11 @@ const ACTIONS = {
     toast(data?.sent ? t('testSent') : t('testNone'), !data?.sent);
   },
   otherEmail: () => { S.authStep = 'email'; render(); },
+  useLoginCode: () => { S.authStep = 'login'; render(); },
+  makeLoginCode: async () => {
+    S.loginCode = await run(sb.rpc('create_login_code'));
+    render();
+  },
   setupMode: (id) => { S.setupMode = id; render(); },
   signOut: async () => { await sb.auth.signOut(); },
   close: () => closeDialog(),
@@ -1039,6 +1092,7 @@ document.addEventListener('visibilitychange', () => {
     S.session = session;
     S.me = null;
     S.pushOn = false;
+    S.loginCode = null;
     S.authStep = 'email';
     if (session) { try { await loadAll(); } catch { /* shown */ } }
     render();

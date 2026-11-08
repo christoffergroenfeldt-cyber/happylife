@@ -201,6 +201,9 @@ a.btnlink {
   margin: 10px 0; text-align: center; padding: 10px; border: 2px dashed var(--line); border-radius: 12px;
 }
 
+.code.login-code { font-size: 2.2rem; letter-spacing: .12em; border-color: var(--accent); color: var(--accent); }
+#loginCodeForm input.otp { letter-spacing: .12em; text-transform: uppercase; }
+
 /* ---------- forms ---------- */
 form.card, .form { display: flex; flex-direction: column; gap: 12px; }
 label { display: flex; flex-direction: column; gap: 4px; font-size: .9rem; color: var(--muted); font-weight: 600; }
