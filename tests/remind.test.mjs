@@ -40,6 +40,14 @@ test('not before the task starts', () => {
   assert.equal(dueOccurrence(task({ start_date: '2026-11-20' }), '2026-11-09', '08:00'), null);
 });
 
+test('weekdays: Monday–Friday only', () => {
+  const w = task({ recurrence: 'weekdays' });
+  assert.equal(dueOccurrence(w, '2026-11-13', '08:00').period, '2026-11-13'); // Fri
+  assert.equal(dueOccurrence(w, '2026-11-14', '08:00'), null);               // Sat
+  assert.equal(dueOccurrence(w, '2026-11-15', '08:00'), null);               // Sun
+  assert.equal(dueOccurrence(w, '2026-11-16', '08:00').period, '2026-11-16'); // Mon
+});
+
 test('weekly: deadline is Sunday', () => {
   const w = task({ recurrence: 'weekly', remind_days_before: 2 });
   assert.deepEqual(dueOccurrence(w, '2026-11-13', '08:00'), { period: '2026-11-09', deadline: '2026-11-15', before: 2 }); // Fri
