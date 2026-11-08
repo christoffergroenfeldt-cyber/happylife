@@ -25,7 +25,12 @@ Deno.serve(async (req) => {
       if (/too many/.test(error.message)) return json({ error: 'too_many' }, 429);
       throw error;
     }
-    if (!userId) return json({ error: 'invalid' }, 400);
+    if (!userId) {
+      // Easy mix-up: the family invitation code looks the same – say so
+      const norm = code.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const { data: fam } = await admin.from('families').select('id').eq('invite_code', norm).maybeSingle();
+      return json({ error: fam ? 'invite_code' : 'invalid' }, 400);
+    }
 
     const { data: u, error: e1 } = await admin.auth.admin.getUserById(userId);
     if (e1 || !u?.user?.email) throw e1 || new Error('user has no email');

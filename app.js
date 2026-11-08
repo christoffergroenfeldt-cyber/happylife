@@ -303,7 +303,7 @@ function renderAuth() {
         if (!e2) return; // onAuthStateChange takes over
         console.error(e2); reason = 'server';
       }
-      toast(t({ invalid: 'loginCodeWrong', too_many: 'loginCodeTooMany' }[reason] || 'loginCodeError'), true);
+      toast(t({ invalid: 'loginCodeWrong', too_many: 'loginCodeTooMany', invite_code: 'loginCodeIsInvite' }[reason] || 'loginCodeError'), true);
       busy(e, false);
     };
   } else if (codeStep) {
@@ -825,11 +825,13 @@ function eventForm(ev) {
 function viewFamily() {
   const admin = S.me.is_admin;
   return `
-    <div class="card">
-      <h3>${esc(S.family.name)}</h3>
-      <p class="meta">${esc(t('inviteHelp'))}</p>
-      <div class="code">${esc(S.family.invite_code)}</div>
-      ${admin ? `<button class="small" data-act="newCode">${t('newCode')}</button>` : ''}
+    ${loginCodeSection()}
+    <h2>✉️ ${esc(t('inviteTitle'))}</h2>
+    <div class="card invite">
+      <p class="meta">${esc(t('inviteHelp', { family: S.family.name }))}</p>
+      <div class="code invite-code">${esc(S.family.invite_code)}</div>
+      <p class="hint">${esc(t('inviteNotLogin'))}</p>
+      ${admin ? `<button class="small" data-act="newCode">${t('newInviteCode')}</button>` : ''}
     </div>
     <h2>${esc(t('members'))}</h2>
     <div class="list">${S.members.map((m) => `
@@ -845,7 +847,6 @@ function viewFamily() {
     <form class="inline" id="nameForm"><input name="name" value="${esc(S.me.display_name)}" required>
       <button type="submit">${t('save')}</button></form>
     ${pushSection()}
-    ${loginCodeSection()}
     ${calendarSection()}
     <h2>${esc(t('language'))}</h2>
     ${langPicker()}
@@ -1042,7 +1043,10 @@ const ACTIONS = {
   delEvent: async (id) => { if (!confirm(t('confirmDelete'))) return;
     await run(sb.from('events').delete().eq('id', id)); closeDialog(); await refresh(); },
 
-  newCode: async () => { await run(sb.rpc('new_invite_code')); await refresh(); },
+  newCode: async () => {
+    if (!confirm(t('newInviteConfirm'))) return;
+    await run(sb.rpc('new_invite_code')); await refresh();
+  },
   editMember: (id) => memberForm(byId(S.members, id, 'user_id')),
   delMember: async (id) => { if (!confirm(t('confirmDelete'))) return;
     await run(sb.from('members').delete().eq('user_id', id)); closeDialog(); await refresh(); },
