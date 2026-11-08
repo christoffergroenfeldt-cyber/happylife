@@ -21,6 +21,7 @@ type Task = {
   open: boolean; need: number; recurrence: string; interval_days: number | null;
   start_date: string; due_date: string | null; created_by: string | null;
   remind_time: string | null; remind_days_before: number;
+  days_before?: number; event_yearly?: boolean;
 };
 type Member = { user_id: string; roles: string[] };
 type Done = { done_by: string; period: string };
@@ -29,6 +30,18 @@ const toUTC = (iso: string) => { const [y, m, d] = iso.split('-').map(Number); r
 const daysBetween = (a: string, b: string) => Math.round((toUTC(b) - toUTC(a)) / 86400000);
 const addDays = (iso: string, n: number) => new Date(toUTC(iso) + n * 86400000).toISOString().slice(0, 10);
 const weekStart = (iso: string) => addDays(iso, -((new Date(toUTC(iso)).getUTCDay() + 6) % 7));
+
+// Next date (>= day) a yearly date falls on; Feb 29 -> Feb 28 in non-leap years
+function nextYearly(startIso: string, day: string) {
+  const [, m, d] = startIso.split('-').map(Number);
+  const make = (y: number) => {
+    const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+    const dd = m === 2 && d === 29 && !leap ? 28 : d;
+    return `${y}-${String(m).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+  };
+  const y = Number(day.slice(0, 4));
+  return make(y) >= day ? make(y) : make(y + 1);
+}
 
 function periodKey(task: Task, day: string): string | null {
   if (task.start_date && day < task.start_date && task.recurrence !== 'once') return null;
@@ -78,6 +91,12 @@ export function dueOccurrence(task: Task, today: string, now: string) {
   if (!task.remind_time || task.remind_time.slice(0, 5) > now) return null;
   const before = task.remind_days_before || 0;
   const deadline = addDays(today, before);
+  if (task.recurrence === 'event') {
+    // deadline = event date minus days_before
+    const occ = addDays(deadline, task.days_before || 0);
+    const isOcc = task.event_yearly ? nextYearly(task.start_date, occ) === occ : task.start_date === occ;
+    return isOcc ? { period: occ, deadline, before } : null;
+  }
   if (task.recurrence === 'once') {
     const due = task.due_date || task.start_date;
     return due === deadline ? { period: 'once', deadline, before } : null;

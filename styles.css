@@ -146,6 +146,46 @@ button:disabled { opacity: .6; }
 details summary { cursor: pointer; color: var(--muted); margin-top: 10px; font-size: .9rem; }
 .plan .list { margin: 12px 0; }
 
+/* ---------- event tasks ---------- */
+.for-event { margin: -6px 0 0; color: var(--muted); font-weight: 700; }
+.ev-tasks { background: color-mix(in srgb, var(--gold) 9%, transparent); border-color: color-mix(in srgb, var(--gold) 45%, var(--line)); }
+.ev-tasks .list { gap: 6px; margin-bottom: 10px; }
+button.ev-task {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; width: 100%;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px;
+}
+.sugg { display: flex; flex-wrap: wrap; gap: 6px; }
+button.chip-btn {
+  border: 1px dashed var(--accent); background: var(--surface); color: var(--ink); border-radius: 999px;
+  padding: 6px 12px; font-weight: 700; font-size: .88rem;
+}
+button.chip-btn small { color: var(--muted); font-weight: 600; margin-left: 2px; }
+
+/* ---------- calendar sync ---------- */
+.copyrow { display: flex; gap: 8px; align-items: center; }
+input.mono { font: 600 .82rem/1.2 ui-monospace, Menlo, monospace; }
+.cal-list { margin: 12px 0 4px; }
+.cal-head, .cal-row { display: grid; grid-template-columns: 1fr 52px 64px; align-items: center; gap: 8px; }
+.cal-head { font-size: .78rem; color: var(--muted); font-weight: 700; padding-bottom: 4px; }
+.cal-head span:not(:first-child) { text-align: center; }
+.cal-row { padding: 8px 0; border-top: 1px solid var(--line); }
+.cal-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.switch {
+  justify-self: center; width: 44px; height: 26px; border-radius: 99px; border: 0; padding: 0;
+  background: var(--line); position: relative; transition: background .15s;
+}
+button.switch::after {
+  content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .15s;
+}
+button.switch.on { background: var(--ok); }
+button.switch.on::after { transform: translateX(18px); }
+button.switch:disabled { opacity: .35; }
+a.btnlink {
+  display: inline-block; padding: 6px 12px; border-radius: 12px; border: 1px solid var(--line);
+  color: var(--ink); text-decoration: none; font-weight: 700; font-size: .88rem;
+}
+
 /* ---------- points ---------- */
 .points { margin-top: 14px; }
 .pts-label { font-family: 'Fraunces', Georgia, serif; font-weight: 600; font-size: 1.05rem; margin-bottom: 6px; }

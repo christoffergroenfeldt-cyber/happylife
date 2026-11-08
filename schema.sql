@@ -519,3 +519,290 @@ alter function can_see(text[], uuid) set search_path = public;
 alter function i_am_parent() set search_path = public;
 alter function task_visible(text[], uuid[], uuid) set search_path = public;
 alter function clean_roles(text[]) set search_path = public;
+
+-- ================================================================ calendar
+-- 1) Event tasks: a parent can attach tasks to a calendar event, e.g.
+--    "Buy present" 7 days before Anna's birthday. recurrence = 'event':
+--    one occurrence per event date (every year for yearly events). The task
+--    copies the event's date and yearly flag (kept in sync by triggers), so
+--    a child can do the task even if the event itself is parents-only.
+-- 2) Calendar sync from iPhone: an iOS Shortcut (like the Friends app's)
+--    sends the events of the coming year. Only events from calendars the
+--    parent has switched on in the app are saved; the rest are discarded
+--    on arrival – only calendar names are kept, so they can be switched on.
+
+alter table tasks drop constraint if exists tasks_recurrence_check;
+alter table tasks add constraint tasks_recurrence_check
+  check (recurrence in ('once','daily','weekly','monthly','yearly','custom','event'));
+alter table tasks add column if not exists event_id uuid references events on delete cascade;
+alter table tasks add column if not exists days_before int not null default 0
+  check (days_before between 0 and 365);
+alter table tasks add column if not exists event_yearly boolean not null default false;
+alter table tasks drop constraint if exists task_event_link;
+alter table tasks add constraint task_event_link
+  check ((recurrence = 'event') = (event_id is not null));
+create index if not exists tasks_event on tasks(event_id);
+
+alter table events add column if not exists ext_key text;          -- set for imported events
+alter table events add column if not exists imported boolean not null default false;
+create unique index if not exists events_ext_key on events(family_id, ext_key);
+
+-- Event tasks take the date and yearly flag from their event
+create or replace function task_event_copy() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare ev events;
+begin
+  if new.event_id is null then return new; end if;
+  select * into ev from events where id = new.event_id;
+  if not found or ev.family_id <> new.family_id then raise exception 'event not found'; end if;
+  new.recurrence := 'event';
+  new.start_date := ev.start_date;
+  new.event_yearly := ev.yearly;
+  new.due_date := null;
+  return new;
+end $$;
+drop trigger if exists task_event_copy on tasks;
+create trigger task_event_copy before insert or update on tasks
+  for each row execute function task_event_copy();
+
+create or replace function event_to_tasks() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  update tasks set start_date = new.start_date, event_yearly = new.yearly where event_id = new.id;
+  return new;
+end $$;
+drop trigger if exists event_to_tasks on events;
+create trigger event_to_tasks after update of start_date, yearly on events
+  for each row execute function event_to_tasks();
+
+-- Only parents attach tasks to events
+drop policy if exists tasks_insert on tasks;
+create policy tasks_insert on tasks for insert with check (
+  family_id = my_family() and created_by = auth.uid()
+  and all_in_my_family(assignees)
+  and (assignees <@ array[auth.uid()] or i_am_parent())
+  and (plan_id is null or i_am_parent())
+  and (points = 0 or i_am_parent())
+  and (event_id is null or i_am_parent()));
+drop policy if exists tasks_update on tasks;
+create policy tasks_update on tasks for update
+  using (family_id = my_family() and task_visible(roles, assignees, created_by)
+         and (created_by = auth.uid() or i_am_parent()))
+  with check (family_id = my_family() and all_in_my_family(assignees)
+         and (assignees <@ array[auth.uid()] or i_am_parent())
+         and (plan_id is null or i_am_parent())
+         and (points = 0 or i_am_parent())
+         and (event_id is null or i_am_parent()));
+
+-- ---------------------------------------------------------------- sync
+create table if not exists sync_tokens (
+  user_id      uuid primary key references auth.users on delete cascade,
+  token        text not null unique
+               default replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', ''),
+  last_sync_at timestamptz,
+  last_result  text
+);
+alter table sync_tokens enable row level security;
+drop policy if exists st_select on sync_tokens;
+create policy st_select on sync_tokens for select using (user_id = auth.uid());
+
+-- The phone calendars each parent has sent, and which ones to import
+create table if not exists user_calendars (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null references auth.users on delete cascade,
+  family_id    uuid not null references families on delete cascade,
+  name         text not null,
+  included     boolean not null default false,
+  yearly       boolean not null default false,
+  last_seen_at timestamptz not null default now(),
+  unique (user_id, name)
+);
+alter table user_calendars enable row level security;
+drop policy if exists uc_select on user_calendars;
+create policy uc_select on user_calendars for select using (user_id = auth.uid());
+
+-- Which parent's calendar(s) an imported event came from. An event is
+-- removed when no calendar has it any more (its tasks go with it).
+create table if not exists event_sources (
+  event_id    uuid not null references events on delete cascade,
+  user_id     uuid not null references auth.users on delete cascade,
+  calendar_id uuid not null references user_calendars on delete cascade,
+  last_seen   timestamptz not null default now(),
+  primary key (event_id, user_id, calendar_id)
+);
+alter table event_sources enable row level security;   -- server only
+
+create or replace function cal_ext_key(p_title text, p_date date, p_yearly boolean) returns text
+language sql immutable set search_path = public as $$
+  select case when p_yearly then 'y|' || lower(p_title) || '|' || to_char(p_date, 'MM-DD')
+              else 'o|' || lower(p_title) || '|' || to_char(p_date, 'YYYY-MM-DD') end
+$$;
+
+create or replace function cal_guess_type(p_title text, p_calendar text) returns text
+language sql immutable set search_path = public as $$
+  select case
+    when p_title || ' ' || p_calendar ~* '(fødsels|fodsels|birthday|anniversaire de|geburtstag|cumpleaños)' then 'birthday'
+    when p_title || ' ' || p_calendar ~* '(bryllup|mærkedag|anniversary|anniversaire|jubilæum|kæreste)' then 'anniversary'
+    when p_title || ' ' || p_calendar ~* '(ferie|vacation|holiday|vacances|rejse|trip)' then 'vacation'
+    else 'other' end
+$$;
+
+create or replace function remove_orphan_events(p_family uuid) returns void
+language sql security definer set search_path = public as $$
+  delete from events e where e.family_id = p_family and e.imported
+    and not exists (select 1 from event_sources s where s.event_id = e.id)
+$$;
+
+-- Called by the iOS Shortcut (with the public anon key + the personal sync
+-- code). Six lists, one line per event, same order. Rules:
+--   * same number of lines in every list, ISO 8601 dates, Yes/No all-day
+--   * at most 3000 events, 40 calendars, titles up to 200 characters
+--   * nothing is saved if anything is wrong
+--   * a calendar that sends nothing keeps its events (e.g. access not granted)
+create or replace function sync_calendar(p_token text, p_titles text, p_starts text, p_ends text,
+                                         p_allday text, p_calendars text)
+returns text language plpgsql security definer set search_path = public as $$
+declare
+  iso_re  constant text := '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}(:?\d{2})?)$';
+  flag_re constant text := '^(yes|no|true|false|1|0|ja|nej|oui|non)$';
+  me members;
+  split_re constant text := E'\\r?\\n';
+  ti text[] := regexp_split_to_array(regexp_replace(coalesce(p_titles, ''),    E'(\\r?\\n)+$', ''), split_re);
+  s  text[] := regexp_split_to_array(regexp_replace(trim(coalesce(p_starts, '')),    E'\\s*\\r?\\n\\s*', E'\n', 'g'), split_re);
+  e  text[] := regexp_split_to_array(regexp_replace(trim(coalesce(p_ends, '')),      E'\\s*\\r?\\n\\s*', E'\n', 'g'), split_re);
+  a  text[] := regexp_split_to_array(regexp_replace(trim(coalesce(p_allday, '')),    E'\\s*\\r?\\n\\s*', E'\n', 'g'), split_re);
+  c  text[] := regexp_split_to_array(regexp_replace(trim(coalesce(p_calendars, '')), E'\\s*\\r?\\n\\s*', E'\n', 'g'), split_re);
+  n int; i int; cal user_calendars; t text; d1 date; d2 date; yearly boolean;
+  ev_id uuid; seen_cals uuid[] := '{}'; saved uuid[] := '{}'; n_saved int := 0; n_new_cals int := 0; n_cals int; msg text;
+begin
+  select m.* into me from sync_tokens st join members m on m.user_id = st.user_id
+   where st.token = trim(coalesce(p_token, ''));
+  if not found then
+    raise exception 'Ukendt synkroniseringskode. Kopiér den igen i Happy Life (Familie → Kalender fra iPhone).';
+  end if;
+  if not (me.roles && array['mother','father']) then
+    raise exception 'Kun mor og far kan synkronisere kalendere.';
+  end if;
+  if length(coalesce(p_titles,'')) + length(coalesce(p_starts,'')) + length(coalesce(p_ends,''))
+     + length(coalesce(p_calendars,'')) > 1500000 then
+    raise exception 'For mange data. Intet blev gemt.';
+  end if;
+  if coalesce(p_starts, '') ~ '^\s*$' then
+    raise exception 'Ingen begivenheder modtaget. Intet blev ændret.';
+  end if;
+
+  n := array_length(s, 1);
+  if n <> coalesce(array_length(ti, 1), 0) or n <> coalesce(array_length(e, 1), 0)
+     or n <> coalesce(array_length(a, 1), 0) or n <> coalesce(array_length(c, 1), 0) then
+    raise exception 'Afvist: % titler, % starttider, % sluttider, % heldags og % kalendere – de skal passe sammen (måske en titel med linjeskift). Intet blev gemt.',
+      coalesce(array_length(ti, 1), 0), n, coalesce(array_length(e, 1), 0),
+      coalesce(array_length(a, 1), 0), coalesce(array_length(c, 1), 0);
+  end if;
+  if n > 3000 then raise exception 'Over 3000 begivenheder. Hent færre dage i genvejen. Intet blev gemt.'; end if;
+  for i in 1 .. n loop
+    if s[i] !~ iso_re or e[i] !~ iso_re or lower(a[i]) !~ flag_re then
+      raise exception 'Afvist: begivenhed % har ikke en gyldig start, slut og Ja/Nej. Intet blev gemt.', i;
+    end if;
+    if length(c[i]) not between 1 and 100 or c[i] ~ '[[:cntrl:]]' then
+      raise exception 'Afvist: begivenhed % har et ugyldigt kalendernavn. Intet blev gemt.', i;
+    end if;
+  end loop;
+  select count(distinct x) into n_cals from unnest(c) x;
+  if n_cals > 40 then raise exception 'Over 40 kalendere. Intet blev gemt.'; end if;
+
+  -- Calendars: remember all names; new ones named like birthdays are on by default
+  for t in select distinct x from unnest(c) x loop
+    if not exists (select 1 from user_calendars where user_id = me.user_id and name = t)
+       and t !~* '(fødsels|fodsels|birthday|anniversaire|geburtstag|mærkedag)' then
+      n_new_cals := n_new_cals + 1;
+    end if;
+    insert into user_calendars(user_id, family_id, name, included, yearly)
+      values (me.user_id, me.family_id, t,
+              t ~* '(fødsels|fodsels|birthday|anniversaire|geburtstag|mærkedag)',
+              t ~* '(fødsels|fodsels|birthday|anniversaire|geburtstag|mærkedag)')
+      on conflict (user_id, name) do update set last_seen_at = now(), family_id = excluded.family_id
+      returning * into cal;
+    seen_cals := seen_cals || cal.id;
+  end loop;
+
+  -- Events from switched-on calendars
+  for i in 1 .. n loop
+    select * into cal from user_calendars where user_id = me.user_id and name = c[i];
+    continue when not cal.included;
+    t := left(btrim(regexp_replace(ti[i], '[[:cntrl:]]', ' ', 'g')), 200);
+    continue when t = '';
+    d1 := substr(s[i], 1, 10)::date;
+    d2 := substr(e[i], 1, 10)::date;
+    if lower(a[i]) in ('yes','true','1','ja','oui') and substr(e[i], 12, 5) = '00:00' and d2 > d1 then
+      d2 := d2 - 1;  -- all-day events end at midnight the next day
+    end if;
+    if d2 <= d1 then d2 := null; end if;
+    yearly := cal.yearly;
+    insert into events(family_id, type, title, start_date, end_date, yearly, remind_days, roles,
+                       created_by, ext_key, imported)
+      values (me.family_id, cal_guess_type(t, cal.name), t, d1, case when yearly then null else d2 end,
+              yearly, 7, '{mother,father}', me.user_id, cal_ext_key(t, d1, yearly), true)
+      on conflict (family_id, ext_key) do update
+        set end_date = case when events.yearly then null else excluded.end_date end
+      returning id into ev_id;
+    insert into event_sources(event_id, user_id, calendar_id) values (ev_id, me.user_id, cal.id)
+      on conflict (event_id, user_id, calendar_id) do update set last_seen = now();
+    if not ev_id = any(saved) then saved := saved || ev_id; end if;
+  end loop;
+  n_saved := coalesce(array_length(saved, 1), 0);
+
+  -- Events no longer in a calendar that sent something this time
+  delete from event_sources es
+   where es.user_id = me.user_id and es.calendar_id = any(seen_cals)
+     and es.last_seen < now()   -- now() = start of this run; rows seen in this run equal it
+     and not exists (select 1 from events ev where ev.id = es.event_id and ev.start_date < current_date and not ev.yearly);
+  perform remove_orphan_events(me.family_id);
+
+  msg := format('Happy Life: %s begivenheder fra %s af %s kalendere.', n_saved,
+                (select count(*) from user_calendars where id = any(seen_cals) and included), n_cals);
+  if n_new_cals > 0 then
+    msg := msg || format(' %s nye kalendere – slå dem til i appen under Familie, hvis de skal med.', n_new_cals);
+  end if;
+  update sync_tokens set last_sync_at = now(), last_result = msg where user_id = me.user_id;
+  return msg;
+end $$;
+
+-- My sync code (made the first time; parents only)
+create or replace function my_sync_token(p_new boolean default false)
+returns sync_tokens language plpgsql security definer set search_path = public as $$
+declare r sync_tokens;
+begin
+  if not i_am_parent() then raise exception 'parents only'; end if;
+  if p_new then delete from sync_tokens where user_id = auth.uid(); end if;
+  insert into sync_tokens(user_id) values (auth.uid()) on conflict (user_id) do nothing;
+  select * into r from sync_tokens where user_id = auth.uid();
+  return r;
+end $$;
+
+-- Switch a phone calendar on/off or change "every year". Switching off
+-- removes its events (and their tasks) at once; switching on takes effect
+-- at the next sync.
+create or replace function set_calendar(p_id uuid, p_included boolean, p_yearly boolean)
+returns void language plpgsql security definer set search_path = public as $$
+declare cal user_calendars;
+begin
+  select * into cal from user_calendars where id = p_id and user_id = auth.uid();
+  if not found then raise exception 'calendar not found'; end if;
+  update user_calendars set included = p_included, yearly = p_yearly where id = p_id;
+  if not p_included then
+    delete from event_sources where calendar_id = p_id;
+  elsif p_yearly is distinct from cal.yearly then
+    update events ev set yearly = p_yearly, end_date = null,
+                         ext_key = cal_ext_key(ev.title, ev.start_date, p_yearly)
+     where ev.id in (select event_id from event_sources where calendar_id = p_id)
+       and not exists (select 1 from events o where o.family_id = ev.family_id and o.id <> ev.id
+                       and o.ext_key = cal_ext_key(ev.title, ev.start_date, p_yearly));
+  end if;
+  perform remove_orphan_events(cal.family_id);
+end $$;
+
+revoke execute on function sync_calendar(text,text,text,text,text,text), my_sync_token(boolean),
+  set_calendar(uuid,boolean,boolean), task_event_copy(), event_to_tasks(), remove_orphan_events(uuid),
+  cal_ext_key(text,date,boolean), cal_guess_type(text,text) from public, anon, authenticated;
+grant execute on function sync_calendar(text,text,text,text,text,text) to anon, authenticated;
+grant execute on function my_sync_token(boolean), set_calendar(uuid,boolean,boolean) to authenticated;

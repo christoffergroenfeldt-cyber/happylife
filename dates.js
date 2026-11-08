@@ -47,11 +47,27 @@ export function trackerStatus(intervalDays, entryDates, today) {
   return { last, since, dueIn: intervalDays - since };
 }
 
+// Event tasks: the event date they are for next (null when a one-off event has passed)
+export function eventOccurrence(task, today) {
+  if (task.event_yearly) return nextYearly(task.start_date, today);
+  return task.start_date >= today ? task.start_date : null;
+}
+
+// Event tasks show up this many days before their deadline
+export const EVENT_LEAD_DAYS = 14;
+
 // Key of the occurrence a task is in today:
 // once -> 'once', daily -> date, weekly -> Monday's date, monthly -> 'YYYY-MM',
-// yearly -> 'YYYY', custom (every N days from start_date) -> that period's first date.
+// yearly -> 'YYYY', custom (every N days from start_date) -> that period's first date,
+// event -> the event date (only from EVENT_LEAD_DAYS before the deadline).
 // Returns null when the task hasn't started yet.
 export function periodKey(task, today) {
+  if (task.recurrence === 'event') {
+    const occ = eventOccurrence(task, today);
+    if (!occ) return null;
+    const deadline = addDays(occ, -(task.days_before || 0));
+    return daysBetween(today, deadline) > EVENT_LEAD_DAYS ? null : occ;
+  }
   if (task.start_date && today < task.start_date && task.recurrence !== 'once') return null;
   switch (task.recurrence) {
     case 'daily': return today;
@@ -70,6 +86,10 @@ export function periodKey(task, today) {
 // Last day of the current occurrence (for "due by")
 export function periodEnd(task, today) {
   switch (task.recurrence) {
+    case 'event': {
+      const occ = eventOccurrence(task, today);
+      return occ ? addDays(occ, -(task.days_before || 0)) : null;
+    }
     case 'daily': return today;
     case 'weekly': return addDays(weekStart(today), 6);
     case 'monthly': {

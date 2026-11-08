@@ -64,6 +64,22 @@ test('once: due date, or start date when no due date', () => {
   assert.equal(dueOccurrence(task({ recurrence: 'once', start_date: '2026-11-09' }), '2026-11-09', '08:00').period, 'once');
 });
 
+test('event task: N days before a yearly birthday, every year', () => {
+  const gift = task({ recurrence: 'event', start_date: '2020-11-20', event_yearly: true, days_before: 7, remind_days_before: 1 });
+  // deadline 13 Nov, reminder 1 day before = 12 Nov
+  assert.deepEqual(dueOccurrence(gift, '2026-11-12', '08:00'), { period: '2026-11-20', deadline: '2026-11-13', before: 1 });
+  assert.equal(dueOccurrence(gift, '2026-11-13', '08:00'), null);
+  assert.equal(dueOccurrence(gift, '2027-11-12', '08:00').period, '2027-11-20');
+});
+
+test('event task: one-off event only on its date; Feb 29 birthday on Feb 28', () => {
+  const pack = task({ recurrence: 'event', start_date: '2027-07-01', event_yearly: false, days_before: 1 });
+  assert.equal(dueOccurrence(pack, '2027-06-30', '08:00').period, '2027-07-01');
+  assert.equal(dueOccurrence(pack, '2028-06-30', '08:00'), null);
+  const leap = task({ recurrence: 'event', start_date: '2024-02-29', event_yearly: true, days_before: 0 });
+  assert.equal(dueOccurrence(leap, '2027-02-28', '08:00').period, '2027-02-28');
+});
+
 const members = [
   { user_id: 'dad', roles: ['father', 'husband'] }, { user_id: 'mum', roles: ['mother', 'wife'] },
   { user_id: 'anna', roles: ['child'] }, { user_id: 'emil', roles: ['child'] },

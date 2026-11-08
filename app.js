@@ -1,8 +1,8 @@
 // Happy Life – main app
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, VAPID_PUBLIC_KEY } from './config.js';
-import { t, setLang, getLang, LANGS, IDEAS } from './i18n.js';
-import { todayISO, daysBetween, trackerStatus, eventStatus, periodKey, periodEnd, fmtDate } from './dates.js';
+import { t, setLang, getLang, LANGS, IDEAS, EVENT_TASKS } from './i18n.js';
+import { todayISO, daysBetween, addDays, trackerStatus, eventStatus, periodKey, periodEnd, eventOccurrence, fmtDate } from './dates.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
@@ -12,6 +12,7 @@ const PARENT = ['mother', 'father'];
 const S = {
   session: null, me: null, family: null, members: [],
   plans: [], tasks: [], done: [], takes: [], trackers: [], entries: [], events: [], points: [],
+  sync: null, calendars: [],
   tab: 'home', authStep: 'email', authEmail: '', setupMode: 'create', ideaShift: {}, pushOn: false,
 };
 
@@ -85,6 +86,13 @@ async function loadAll() {
     run(sb.rpc('points_summary')),
   ]);
   Object.assign(S, { family, members, plans, tasks, done, takes, trackers, entries, events, points: points || [] });
+  if (isParent()) {
+    const [sync, calendars] = await Promise.all([
+      run(sb.from('sync_tokens').select('*').maybeSingle()),
+      run(sb.from('user_calendars').select('*').order('name')),
+    ]);
+    Object.assign(S, { sync, calendars });
+  }
 }
 
 function isoMinus(days) {
@@ -130,9 +138,24 @@ function taskState(task) {
 }
 
 function recLabel(task) {
+  if (task.recurrence === 'event') return eventTaskLabel(task);
   if (task.recurrence === 'custom') return t('everyN', task.interval_days);
   return t('rec.' + task.recurrence);
 }
+
+// "7 dage før Annas fødselsdag" (the event may be hidden from a child: then the date)
+function eventTaskLabel(task) {
+  const ev = S.events.find((e) => e.id === task.event_id);
+  const n = task.days_before || 0;
+  if (!ev) {
+    const occ = eventOccurrence(task, today());
+    return `${n ? t('daysBefore', n) : t('onTheDay')}${occ ? ` ${fmtDate(occ, getLang())}` : ''}`;
+  }
+  const title = ev.title;
+  return n === 0 ? t('onEventDay', { title }) : n === 1 ? t('dayBeforeEvent', { title }) : t('daysBeforeEvent', { n, title });
+}
+
+const eventIcon = (type) => ({ vacation: '🏖️', anniversary: '💍', birthday: '🎂', other: '📌' }[type] || '📌');
 
 // Point counters: a child sees their own, parents see every child's
 function pointsCard() {
@@ -438,24 +461,50 @@ function viewTasks() {
     ${fam.length ? `<div class="list">${fam.map(({ task, st }) => taskRow(task, st, { manage: true })).join('')}</div>`
                  : `<p class="empty">${esc(t('noTasks'))}</p>`}
     ${isParent() ? `<h2>${esc(t('plans'))}</h2>${plans || `<p class="empty">${esc(t('noPlans'))}</p>`}` : ''}
-    ${others.length ? `<h2>${esc(t('forOthers'))}</h2><div class="list">${others.map(({ task, st }) => taskRow(task, st, { manage: true })).join('')}</div>` : ''}`;
+    ${others.length ? `<h2>${esc(t('forOthers'))}</h2><div class="list">${others.map(({ task, st }) => taskRow(task, st, { manage: true })).join('')}</div>` : ''}
+    ${isParent() ? upcomingEventTasks(all) : ''}`;
 }
 
-function taskForm(task, planId) {
+// Event tasks that haven't come up yet (they appear above 14 days before their deadline)
+function upcomingEventTasks(all) {
+  const td = today();
+  const rows = all.filter(({ task, st }) => task.recurrence === 'event' && !st.active)
+    .map(({ task }) => ({ task, occ: eventOccurrence(task, td) }))
+    .filter((x) => x.occ)
+    .map((x) => ({ ...x, deadline: addDays(x.occ, -(x.task.days_before || 0)) }))
+    .sort((a, b) => a.deadline.localeCompare(b.deadline));
+  if (!rows.length) return '';
+  return `<h2>${esc(t('upcomingEventTasks'))}</h2><div class="list">${rows.map(({ task, deadline }) => {
+    const ev = S.events.find((e) => e.id === task.event_id);
+    return `<div class="row">
+      <div class="lead big">${eventIcon(ev?.type)}</div>
+      <div class="body"><div class="ttl">${esc(task.title)}</div>
+        <div class="meta">${esc(recLabel(task))} · ${esc(t('dueBy', { date: fmtDate(deadline, getLang()) }))}${task.points ? ` · ⭐ ${esc(t('pointsN', task.points))}` : ''}</div></div>
+      <button class="icon" data-act="editTask" data-id="${task.id}" aria-label="${t('edit')}">✎</button>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+// preset (optional): { event_id, title, days_before } for a task tied to a calendar event
+function taskForm(task, planId, preset = null) {
   const editing = !!task;
   const tk = task || {
     title: '', notes: '', recurrence: planId ? 'daily' : 'once', interval_days: 3,
     start_date: today(), due_date: '', need: 1, open: false, remind_time: '', remind_days_before: 0, points: 0,
     assignees: planId ? children().map((c) => c.user_id) : [],
-    roles: planId ? [] : ['all'], plan_id: planId || null,
+    roles: planId ? [] : ['all'], plan_id: planId || null, event_id: null, days_before: 0,
+    ...(preset ? { recurrence: 'event', assignees: [uid()], roles: [], ...preset } : {}),
   };
-  const kind = editing ? taskKind(tk) : (planId ? 'assigned' : 'open');
+  const isEvent = !!tk.event_id;
+  const ev = isEvent ? S.events.find((e) => e.id === tk.event_id) : null;
+  const kind = editing ? taskKind(tk) : (planId || isEvent ? 'assigned' : 'open');
   const kinds = isParent() ? ['assigned', 'open', 'role'] : ['open', 'role'];
   const assignable = isParent() ? S.members : S.members.filter((m) => m.user_id === uid());
   const recs = ['once', 'daily', 'weekly', 'monthly', 'yearly', 'custom'];
   openDialog(`
     <form id="taskForm" class="form">
       <h2>${editing ? t('edit') : t('newTask')}</h2>
+      ${ev ? `<p class="for-event">${eventIcon(ev.type)} ${esc(ev.title)}</p>` : ''}
       <label>${t('title')}<input name="title" value="${esc(tk.title)}" required></label>
       <label>${t('note')}<input name="notes" value="${esc(tk.notes || '')}"></label>
       <label>${t('taskType')}<select name="kind">${kinds.map((k) =>
@@ -465,8 +514,11 @@ function taskForm(task, planId) {
       <label data-show="open">${t('need')}<input name="need" type="number" min="1" max="20" value="${tk.need}"></label>
       ${isParent() ? `<label>⭐ ${t('points')}<input name="points" type="number" min="0" max="1000" value="${tk.points || 0}"></label>
       <p class="hint">${esc(t('pointsHelp'))}</p>` : ''}
-      <label>${t('recurrence')}<select name="recurrence">${recs.map((r) =>
-        `<option value="${r}" ${r === tk.recurrence ? 'selected' : ''}>${esc(t('rec.' + r))}</option>`).join('')}</select></label>
+      ${isEvent ? `<input type="hidden" name="recurrence" value="event">
+      <label>${t('daysBeforeField')}<input name="days_before" type="number" min="0" max="365" value="${tk.days_before || 0}"></label>
+      <p class="hint">${esc(t(ev?.yearly || tk.event_yearly ? 'eventTaskHelpYearly' : 'eventTaskHelp'))}</p>`
+      : `<label>${t('recurrence')}<select name="recurrence">${recs.map((r) =>
+        `<option value="${r}" ${r === tk.recurrence ? 'selected' : ''}>${esc(t('rec.' + r))}</option>`).join('')}</select></label>`}
       <label data-rec="custom">${t('intervalN')}<input name="interval_days" type="number" min="1" value="${tk.interval_days || 3}"></label>
       <label data-rec="daily weekly monthly yearly custom">${t('startDate')}<input name="start_date" type="date" value="${tk.start_date}"></label>
       <label data-rec="once">${t('due')}<input name="due_date" type="date" value="${tk.due_date || ''}"></label>
@@ -477,6 +529,7 @@ function taskForm(task, planId) {
         </div>
         <p class="hint" data-rec="once">${esc(t('reminderHelpOnce'))}</p>
         <p class="hint" data-rec="daily weekly monthly yearly custom">${esc(t('reminderHelp'))}</p>
+        <p class="hint" data-rec="event">${esc(t('reminderHelpEvent'))}</p>
       </fieldset>
       <div class="btns">
         ${editing ? `<button type="button" class="danger" data-act="delTask" data-id="${task.id}">${t('delete')}</button>` : ''}
@@ -492,6 +545,7 @@ function taskForm(task, planId) {
     form.querySelectorAll('[data-rec]').forEach((el) => { el.hidden = !el.dataset.rec.split(' ').includes(r); });
   };
   form.elements.kind.onchange = sync; form.elements.recurrence.onchange = sync; sync();
+  if (!editing && isEvent) form.elements.title.select();
   form.onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(form);
@@ -510,6 +564,9 @@ function taskForm(task, planId) {
       remind_time: f.get('remind_time') || null,
       remind_days_before: Math.min(60, Math.max(0, Number(f.get('remind_days_before')) || 0)),
     };
+    if (isEvent) Object.assign(row, {
+      event_id: tk.event_id, days_before: Math.min(365, Math.max(0, Number(f.get('days_before')) || 0)),
+    });
     // only parents can set points; a child editing keeps whatever was there
     if (isParent()) row.points = Math.min(1000, Math.max(0, Math.round(Number(f.get('points')) || 0)));
     if (!row.title) return toast(t('needTitle'), true);
@@ -518,6 +575,7 @@ function taskForm(task, planId) {
     if (editing) await run(sb.from('tasks').update(row).eq('id', task.id));
     else await run(sb.from('tasks').insert(row));
     closeDialog(); await refresh();
+    if (isEvent && ev) eventForm(S.events.find((e) => e.id === ev.id)); // back to the event
   };
 }
 
@@ -644,14 +702,16 @@ function logOtherForm(trId) {
 // ------------------------------------------------------------ calendar
 
 function eventRow(ev, st) {
-  const icon = { vacation: '🏖️', anniversary: '💍', birthday: '🎂', other: '📌' }[ev.type];
   const when = st.ongoing ? t('ongoing') : st.days === 0 ? t('isToday') : st.days > 0 ? t('inDays', st.days) : '';
   const range = ev.end_date ? `${fmtDate(ev.start_date, getLang())} – ${fmtDate(ev.end_date, getLang())}` : fmtDate(st.date, getLang());
+  const nTasks = isParent() ? S.tasks.filter((x) => x.event_id === ev.id).length : 0;
+  // imported birthdays have no known first year, so no "N years"
+  const years = ev.yearly && !ev.imported && st.years > 0 ? ` · ${esc(t('years', st.years))}` : '';
   return `
     <div class="row event" data-act="editEvent" data-id="${ev.id}">
-      <div class="lead big">${icon}</div>
-      <div class="body"><div class="ttl">${esc(ev.title)}${ev.yearly && st.years > 0 ? ` · ${esc(t('years', st.years))}` : ''}</div>
-        <div class="meta">${esc(range)}${when ? ` · <strong>${esc(when)}</strong>` : ''}</div></div>
+      <div class="lead big">${eventIcon(ev.type)}</div>
+      <div class="body"><div class="ttl">${esc(ev.title)}${years}</div>
+        <div class="meta">${esc(range)}${when ? ` · <strong>${esc(when)}</strong>` : ''}${ev.imported ? ' · 📱' : ''}${nTasks ? ` · ✅ ${esc(t('nTasks', nTasks))}` : ''}</div></div>
     </div>`;
 }
 
@@ -661,44 +721,73 @@ function viewCalendar() {
   const future = list.filter(({ ev, st }) => st.ongoing || st.days >= 0 || (ev.end_date && ev.end_date >= td))
     .sort((a, b) => a.st.days - b.st.days);
   const past = list.filter((x) => !future.includes(x)).sort((a, b) => b.ev.start_date.localeCompare(a.ev.start_date));
+  const syncHint = isParent() && !S.sync?.last_sync_at
+    ? `<p class="hint">📱 ${esc(t('calSyncHint'))} <button class="link" data-act="tab" data-id="family">${t('tabs.family')} →</button></p>` : '';
   return `<div class="toolbar"><button class="primary" data-act="newEvent">＋ ${t('newEvent')}</button></div>
+    ${isParent() && S.events.length ? `<p class="hint">${esc(t('tapEventForTasks'))}</p>` : ''}
     ${future.length ? `<div class="list">${future.map(({ ev, st }) => eventRow(ev, st)).join('')}</div>` : `<p class="empty">${esc(t('noEvents'))}</p>`}
+    ${syncHint}
     ${past.length ? `<details><summary>${t('history')}</summary><div class="list">${past.map(({ ev, st }) => eventRow(ev, st)).join('')}</div></details>` : ''}`;
+}
+
+// Tasks attached to an event + quick suggestions (parents)
+function eventTasksSection(ev) {
+  if (!ev || !isParent()) return '';
+  const list = S.tasks.filter((x) => x.event_id === ev.id);
+  const sugg = (EVENT_TASKS[getLang()] || EVENT_TASKS.da)[ev.type] || [];
+  return `
+    <fieldset class="ev-tasks"><legend>✅ ${t('eventTasks')}</legend>
+      ${list.length ? `<div class="list">${list.map((x) => `
+        <button type="button" class="ev-task" data-act="editTask" data-id="${x.id}">
+          <span class="ttl">${esc(x.title)}</span>
+          <span class="meta">${esc(recLabel(x))}${x.assignees?.length ? ` · ${esc(x.assignees.map(memberName).join(', '))}` : ''}${x.remind_time ? ` · 🔔 ${esc(x.remind_time.slice(0, 5))}` : ''}${x.points ? ` · ⭐ ${x.points}` : ''}</span>
+        </button>`).join('')}</div>` : `<p class="hint">${esc(t('noEventTasks'))}</p>`}
+      <div class="sugg">${sugg.map(([title, days], i) => `
+        <button type="button" class="chip-btn" data-act="newEventTask" data-id="${ev.id}|${i}">＋ ${esc(title)} <small>${esc(t('daysBefore', days))}</small></button>`).join('')}
+        <button type="button" class="chip-btn" data-act="newEventTask" data-id="${ev.id}|">＋ ${t('otherTask')}</button>
+      </div>
+    </fieldset>`;
 }
 
 function eventForm(ev) {
   const e0 = ev || { type: 'vacation', title: '', start_date: today(), end_date: '', yearly: false, remind_days: 14, roles: ['all'] };
+  const fixed = !!ev?.imported; // title and dates come from the phone
   openDialog(`
     <form id="eventForm" class="form">
-      <h2>${ev ? t('edit') : t('newEvent')}</h2>
+      <h2>${ev ? `${eventIcon(ev.type)} ${esc(ev.title)}` : t('newEvent')}</h2>
+      ${eventTasksSection(ev)}
+      ${fixed ? `<p class="hint">📱 ${esc(t('fromPhone'))}</p>` : ''}
       <label>${t('kind')}<select name="type">${['vacation', 'anniversary', 'birthday', 'other'].map((k) =>
         `<option value="${k}" ${k === e0.type ? 'selected' : ''}>${esc(t('types.' + k))}</option>`).join('')}</select></label>
-      <label>${t('title')}<input name="title" value="${esc(e0.title)}" required></label>
-      <div class="two"><label>${t('start')}<input name="start_date" type="date" value="${e0.start_date}" required></label>
-        <label>${t('end')}<input name="end_date" type="date" value="${e0.end_date || ''}"></label></div>
-      <label class="check"><input type="checkbox" name="yearly" ${e0.yearly ? 'checked' : ''}><span>${t('yearly')}</span></label>
+      <label>${t('title')}<input name="title" value="${esc(e0.title)}" required ${fixed ? 'disabled' : ''}></label>
+      <div class="two"><label>${t('start')}<input name="start_date" type="date" value="${e0.start_date}" required ${fixed ? 'disabled' : ''}></label>
+        <label>${t('end')}<input name="end_date" type="date" value="${e0.end_date || ''}" ${fixed ? 'disabled' : ''}></label></div>
+      <label class="check"><input type="checkbox" name="yearly" ${e0.yearly ? 'checked' : ''} ${fixed ? 'disabled' : ''}><span>${t('yearly')}</span></label>
       <label>${t('remindBefore')}<input name="remind_days" type="number" min="0" value="${e0.remind_days}"></label>
       <fieldset><legend>${t('visibleTo')}</legend>${roleCheckboxes('roles', ITEM_ROLES, e0.roles)}</fieldset>
       <div class="btns">
-        ${ev ? `<button type="button" class="danger" data-act="delEvent" data-id="${ev.id}">${t('delete')}</button>` : ''}
+        ${ev && !fixed ? `<button type="button" class="danger" data-act="delEvent" data-id="${ev.id}">${t('delete')}</button>` : ''}
         <span class="grow"></span>
         <button type="button" data-act="close">${t('cancel')}</button>
         <button class="primary" type="submit">${t('save')}</button>
       </div>
     </form>`);
   const form = document.getElementById('eventForm');
-  form.elements.type.onchange = () => { form.elements.yearly.checked = ['anniversary', 'birthday'].includes(form.elements.type.value); };
+  form.elements.type.onchange = () => {
+    if (!fixed) form.elements.yearly.checked = ['anniversary', 'birthday'].includes(form.elements.type.value);
+  };
   form.onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(form);
-    const row = { type: f.get('type'), title: f.get('title').trim(), start_date: f.get('start_date'),
-      end_date: f.get('end_date') || null, yearly: f.get('yearly') === 'on',
-      remind_days: Number(f.get('remind_days')) || 0, roles: f.getAll('roles') };
+    const row = { type: f.get('type'), remind_days: Number(f.get('remind_days')) || 0, roles: f.getAll('roles') };
+    if (!fixed) Object.assign(row, { title: f.get('title').trim(), start_date: f.get('start_date'),
+      end_date: f.get('end_date') || null, yearly: f.get('yearly') === 'on' });
     if (row.end_date && row.end_date < row.start_date) row.end_date = row.start_date;
     if (!row.roles.length) return toast(t('needRole'), true);
-    if (ev) await run(sb.from('events').update(row).eq('id', ev.id));
-    else await run(sb.from('events').insert(row));
+    if (ev) { await run(sb.from('events').update(row).eq('id', ev.id)); closeDialog(); await refresh(); return; }
+    const [created] = await run(sb.from('events').insert(row).select());
     closeDialog(); await refresh();
+    if (isParent() && created) eventForm(S.events.find((x) => x.id === created.id)); // straight on to tasks
   };
 }
 
@@ -727,9 +816,44 @@ function viewFamily() {
     <form class="inline" id="nameForm"><input name="name" value="${esc(S.me.display_name)}" required>
       <button type="submit">${t('save')}</button></form>
     ${pushSection()}
+    ${calendarSection()}
     <h2>${esc(t('language'))}</h2>
     ${langPicker()}
     <button class="link out" data-act="signOut">${t('signOut')}</button>`;
+}
+
+const SHORTCUT_GUIDE = 'https://github.com/christoffergroenfeldt-cyber/happylife#calendar-from-iphone-shortcut';
+
+// Parents: personal sync code for the iPhone Shortcut, and which phone calendars to import
+function calendarSection() {
+  if (!isParent()) return '';
+  const s = S.sync;
+  const when = s?.last_sync_at ? new Date(s.last_sync_at).toLocaleString(
+    { da: 'da-DK', en: 'en-GB', fr: 'fr-FR' }[getLang()], { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  return `
+    <h2>📱 ${esc(t('calSync'))}</h2>
+    <div class="card cal-sync">
+      <p class="meta">${esc(t('calSyncHelp'))}</p>
+      ${s ? `
+        <label>${t('yourCode')}<div class="copyrow"><input class="mono" value="${esc(s.token)}" readonly>
+          <button type="button" class="small primary" data-act="copyCode">${t('copy')}</button></div></label>
+        <p class="meta">${s.last_sync_at ? `${esc(t('lastSync'))}: ${esc(when)}<br>${esc(s.last_result || '')}` : esc(t('notSynced'))}</p>
+        ${S.calendars.length ? `<div class="cal-list"><div class="cal-head"><span>${esc(t('calendars'))}</span>
+            <span>${esc(t('calInclude'))}</span><span>${esc(t('calYearly'))}</span></div>
+          ${S.calendars.map((c) => `<div class="cal-row">
+            <span class="cal-name">${esc(c.name)}</span>
+            <button type="button" class="switch ${c.included ? 'on' : ''}" data-act="calToggle" data-id="${c.id}|included"
+              role="switch" aria-checked="${c.included}" aria-label="${esc(t('calInclude'))} ${esc(c.name)}"></button>
+            <button type="button" class="switch ${c.yearly ? 'on' : ''}" data-act="calToggle" data-id="${c.id}|yearly"
+              role="switch" aria-checked="${c.yearly}" aria-label="${esc(t('calYearly'))} ${esc(c.name)}" ${c.included ? '' : 'disabled'}></button>
+          </div>`).join('')}</div>
+          <p class="hint">${esc(t('calListHelp'))}</p>` : ''}
+        <div class="acts">
+          <a class="btnlink" href="${SHORTCUT_GUIDE}" target="_blank" rel="noopener">${t('howTo')} ↗</a>
+          <button type="button" class="small" data-act="newSyncCode">${t('newSyncCode')}</button>
+        </div>`
+      : `<button type="button" class="primary" data-act="makeSyncCode">${t('makeCode')}</button>`}
+    </div>`;
 }
 
 function memberForm(m) {
@@ -835,6 +959,33 @@ const ACTIONS = {
 
   newEvent: () => eventForm(null),
   editEvent: (id) => eventForm(byId(S.events, id)),
+  newEventTask: (id) => {
+    const [evId, idx] = id.split('|');
+    const ev = byId(S.events, evId);
+    const sugg = idx === '' ? null : ((EVENT_TASKS[getLang()] || EVENT_TASKS.da)[ev.type] || [])[Number(idx)];
+    taskForm(null, null, {
+      event_id: evId, title: sugg ? `${sugg[0]} – ${ev.title}` : '', days_before: sugg ? sugg[1] : 1,
+    });
+  },
+
+  makeSyncCode: async () => { await run(sb.rpc('my_sync_token')); await refresh(); },
+  newSyncCode: async () => {
+    if (!confirm(t('newCodeConfirm'))) return;
+    await run(sb.rpc('my_sync_token', { p_new: true })); await refresh();
+  },
+  copyCode: async () => {
+    try { await navigator.clipboard.writeText(S.sync.token); toast(t('copied')); }
+    catch { document.querySelector('.cal-sync input.mono')?.select(); }
+  },
+  calToggle: async (id) => {
+    const [calId, field] = id.split('|');
+    const c = byId(S.calendars, calId);
+    const next = { included: c.included, yearly: c.yearly, [field]: !c[field] };
+    if (field === 'included' && !next.included && !confirm(t('calOffConfirm'))) return;
+    await run(sb.rpc('set_calendar', { p_id: calId, p_included: next.included, p_yearly: next.yearly }));
+    if (field === 'included' && next.included) toast(t('calOnNote'));
+    await refresh();
+  },
   delEvent: async (id) => { if (!confirm(t('confirmDelete'))) return;
     await run(sb.from('events').delete().eq('id', id)); closeDialog(); await refresh(); },
 
