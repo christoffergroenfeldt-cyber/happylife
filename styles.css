@@ -432,3 +432,12 @@ details.find-group .count { color: var(--muted); font-weight: 600; }
 /* calendar: which phone calendar an event comes from */
 .caldot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 4px 1px 2px; vertical-align: middle; }
 .cal-chips .hchip { display: inline-flex; align-items: center; }
+
+/* Find page: book & order online */
+.book-online { margin: 4px 0 14px; }
+.book-links { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+a.book-link { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 14px; text-decoration: none;
+  background: var(--surface); border: 1px solid var(--line); color: var(--ink); }
+a.book-link strong { font-size: .95rem; }
+a.book-link span { font-size: .8rem; color: var(--muted); }
+a.book-link.map { border-style: dashed; }

@@ -2,7 +2,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, VAPID_PUBLIC_KEY } from './config.js';
 import { t, setLang, getLang, LANGS, IDEAS, EVENT_TASKS } from './i18n.js';
-import { CUISINES, CATALOG, NEARBY } from './catalog.js';
+import { CUISINES, CATALOG, NEARBY, onlineLinks, MAP_QUERY } from './catalog.js';
 import { geocode, fetchNearby } from './places.js';
 import { AGES, ROUTINES, ROUTINE_REC, ROUTINE_TIME, TEMPLATES } from './templates.js';
 import { todayISO, daysBetween, addDays, trackerStatus, eventStatus, periodKey, periodEnd, eventOccurrence, fmtDate, nextWeekly } from './dates.js';
@@ -12,7 +12,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '23'; // keep in step with CACHE in sw.js
+const APP_VERSION = '24'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -1300,7 +1300,7 @@ function findGroups(kind) {
   }
   for (const g of CATALOG[kind] || []) {
     groups.push({ icon: g.icon, label: g.label[L] || g.label.en,
-      items: g.items.map(([name, sub]) => ({ name, sub, note: sub ? `${name} (${sub})` : name })) });
+      items: g.items.map(([name, sub, url]) => ({ name, sub, note: sub ? `${name} (${sub})` : name, web: url || null })) });
   }
   const ideas = IDEAS[L][kind] || IDEAS[L].custom || [];
   if (ideas.length) groups.push({ icon: '💡', label: t('ideasGroup'), items: ideas.map((x) => ({ name: x, note: x })) });
@@ -1345,6 +1345,7 @@ function viewMomentFind() {
     <div class="kind-chips">${FIND_KINDS().map((k) => `<button class="hchip ${k === f.kind ? 'on' : ''}" data-act="findKind" data-id="${k}">${KIND_ICON[k] || ''} ${esc(t('kinds.' + k))}</button>`).join('')}</div>
     <input id="momentQ" class="find-q" type="search" placeholder="${esc(t('momentSearch'))}" autocomplete="off" enterkeyhint="search">
     ${!target ? `<p class="hint">${esc(t('noMomentKind', { kind: t('kinds.' + f.kind) }))}</p>` : !pickable ? `<p class="hint">${esc(t('findBrowseOnly'))}</p>` : ''}
+    ${bookOnline(f.kind)}
     ${stateMsg}
     ${groups.map((g) => {
       const open = g.items.length <= 6 || groups.length === 1 || total <= 12;
@@ -1353,6 +1354,26 @@ function viewMomentFind() {
         <div class="list">${g.items.map((it) => item(it, g)).join('')}</div></details>`;
     }).join('')}
     ${NEARBY[f.kind] && S.nearbyMeta?.n ? `<p class="hint src">${esc(t('nearbySource', { min: S.family?.nearby_minutes || 20 }))}</p>` : ''}`;
+}
+
+// Links to book or order online for this moment type, and a map search around home
+function bookOnline(kind) {
+  const L = getLang();
+  const links = isParent() ? onlineLinks(kind) : []; // ordering and booking is for parents
+  const q = MAP_QUERY[kind];
+  const f = S.family || {};
+  const map = q ? `https://maps.apple.com/?q=${encodeURIComponent(q)}${f.home_lat != null ? `&sll=${f.home_lat},${f.home_lon}&z=13` : ''}` : null;
+  if (!links.length && !map) return '';
+  return `
+    <div class="book-online">
+      <h3 class="subhead">🔗 ${esc(t('bookOnline'))}</h3>
+      <div class="book-links">
+        ${links.map((x) => `<a class="book-link" href="${esc(x.url)}" target="_blank" rel="noopener">
+          <strong>${esc(x.name)}</strong><span>${esc(x.about[L] || x.about.en)}</span></a>`).join('')}
+        ${map ? `<a class="book-link map" href="${esc(map)}" target="_blank" rel="noopener">
+          <strong>🗺️ ${esc(t('mapNearHome'))}</strong><span>${esc(t(f.home_lat != null ? 'mapNearHomeHint' : 'mapSearchHint', { q }))}</span></a>` : ''}
+      </div>
+    </div>`;
 }
 
 // Parents: the home address that "near home" is measured from

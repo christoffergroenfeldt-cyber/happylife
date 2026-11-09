@@ -46,20 +46,20 @@ const G = (icon, da, en, fr, items) => ({ icon, label: { da, en, fr }, items });
 export const CATALOG = {
   themepark: [
     G('🎡', 'Sjælland & øerne', 'Zealand & islands', 'Seeland & îles', [
-      ['Tivoli', 'København'], ['Bakken', 'Klampenborg'], ['BonBon-Land', 'Holme-Olstrup'],
-      ['Sommerland Sjælland', 'Nykøbing Sj.'], ['Knuthenborg Safaripark', 'Maribo'], ['Joboland', 'Bornholm'],
-      ['Lalandia Rødby', 'Lolland']]),
+      ['Tivoli', 'København', 'https://www.tivoli.dk'], ['Bakken', 'Klampenborg', 'https://www.bakken.dk'], ['BonBon-Land', 'Holme-Olstrup', 'https://www.bonbonland.dk'],
+      ['Sommerland Sjælland', 'Nykøbing Sj.', 'https://www.sommerlandsj.dk'], ['Knuthenborg Safaripark', 'Maribo', 'https://www.knuthenborg.dk'], ['Joboland', 'Bornholm', 'https://www.joboland.dk'],
+      ['Lalandia Rødby', 'Lolland', 'https://www.lalandia.dk']]),
     G('🎢', 'Jylland & Fyn', 'Jutland & Funen', 'Jutland & Fionie', [
-      ['Legoland', 'Billund'], ['Lalandia Billund', 'Billund'], ['Djurs Sommerland', 'Nimtofte'],
-      ['Fårup Sommerland', 'Blokhus'], ['Tivoli Friheden', 'Aarhus'], ['Jesperhus', 'Mors'],
-      ['Givskud Zoo', 'Givskud'], ['Egeskov Slot', 'Fyn']]),
+      ['Legoland', 'Billund', 'https://www.legoland.dk'], ['Lalandia Billund', 'Billund', 'https://www.lalandia.dk'], ['Djurs Sommerland', 'Nimtofte', 'https://www.djurssommerland.dk'],
+      ['Fårup Sommerland', 'Blokhus', 'https://www.faarupsommerland.dk'], ['Tivoli Friheden', 'Aarhus', 'https://www.friheden.dk'], ['Jesperhus', 'Mors', 'https://www.jesperhus.dk'],
+      ['Givskud Zoo', 'Givskud', 'https://www.givskudzoo.dk'], ['Egeskov Slot', 'Fyn', 'https://www.egeskov.dk']]),
     G('🇸🇪', 'Sverige', 'Sweden', 'Suède', [
-      ['Liseberg', 'Göteborg'], ['Gröna Lund', 'Stockholm'], ['Astrid Lindgrens Värld', 'Vimmerby'],
-      ['Skånes Djurpark', 'Höör']]),
+      ['Liseberg', 'Göteborg', 'https://www.liseberg.se'], ['Gröna Lund', 'Stockholm', 'https://www.gronalund.com'], ['Astrid Lindgrens Värld', 'Vimmerby', 'https://www.alv.se'],
+      ['Skånes Djurpark', 'Höör', 'https://www.skanesdjurpark.se']]),
     G('🌍', 'Længere væk', 'Further away', 'Plus loin', [
-      ['Hansa-Park', 'Tyskland'], ['Heide Park', 'Tyskland'], ['Legoland Deutschland', 'Tyskland'],
-      ['Europa-Park', 'Tyskland'], ['Phantasialand', 'Tyskland'], ['Efteling', 'Holland'],
-      ['Disneyland Paris', 'Frankrig'], ['PortAventura', 'Spanien']]),
+      ['Hansa-Park', 'Tyskland', 'https://www.hansapark.de'], ['Heide Park', 'Tyskland', 'https://www.heide-park.de'], ['Legoland Deutschland', 'Tyskland', 'https://www.legoland.de'],
+      ['Europa-Park', 'Tyskland', 'https://www.europapark.de'], ['Phantasialand', 'Tyskland', 'https://www.phantasialand.de'], ['Efteling', 'Holland', 'https://www.efteling.com'],
+      ['Disneyland Paris', 'Frankrig', 'https://www.disneylandparis.com'], ['PortAventura', 'Spanien', 'https://www.portaventuraworld.com']]),
   ],
   vacation: [
     G('🏖️', 'Badeferie', 'Beach holiday', 'Vacances à la plage', [
@@ -95,4 +95,64 @@ CATALOG.trip = [...CATALOG.weekend, ...CATALOG.vacation];
 export const NEARBY = {
   takeaway: ['takeaway'], restaurant: ['restaurant'], date: ['restaurant', 'cinema', 'theatre'],
   movie: ['cinema'], flowers: ['florist'],
+};
+
+// Book or order online, per moment type: [name, url, short description da/en/fr].
+// Checked November 2026 (Just Eat left Denmark in April 2026; Uber Eats arrived).
+const L = (name, url, da, en, fr) => ({ name, url, about: { da, en, fr } });
+const ONLINE = {
+  flowers: [
+    L('Interflora', 'https://www.interflora.dk', 'Blomster leveret samme dag', 'Same-day flower delivery', 'Fleurs livrées le jour même'),
+    L('Euroflorist', 'https://www.euroflorist.dk', 'Buketter med levering', 'Bouquets delivered', 'Bouquets livrés'),
+  ],
+  takeaway: [
+    L('Wolt', 'https://wolt.com/da/dnk', 'Takeaway leveret til døren', 'Takeaway delivered', 'Plats livrés à domicile'),
+    L('Uber Eats', 'https://www.ubereats.com/dk', 'Takeaway leveret (større byer)', 'Takeaway delivered (larger cities)', 'Plats livrés (grandes villes)'),
+  ],
+  restaurant: [
+    L('DinnerBooking', 'https://www.dinnerbooking.com', 'Book bord online', 'Book a table online', 'Réserver une table'),
+  ],
+  movie: [
+    L('Kino.dk', 'https://www.kino.dk', 'Alle film og biografer – køb billet', 'All films and cinemas – buy tickets', 'Tous les films et cinémas – billets'),
+    L('Nordisk Film Biografer', 'https://www.nfbio.dk', 'Billetter og spilletider', 'Tickets and showtimes', 'Billets et séances'),
+  ],
+  surprise: [
+    L('OpdagDanmark', 'https://www.opdagdanmark.dk', 'Ophold og oplevelser – også som gave', 'Stays and experiences – also as gifts', 'Séjours et expériences – aussi en cadeau'),
+    L('Smartbox', 'https://www.smartbox.com/dk/', 'Oplevelsesgaver', 'Experience gift boxes', 'Coffrets cadeaux'),
+    L('Interflora', 'https://www.interflora.dk', 'Blomster og gaver leveret', 'Flowers and gifts delivered', 'Fleurs et cadeaux livrés'),
+  ],
+  date: [
+    L('DinnerBooking', 'https://www.dinnerbooking.com', 'Book bord online', 'Book a table online', 'Réserver une table'),
+    L('Kino.dk', 'https://www.kino.dk', 'Biografbilletter', 'Cinema tickets', 'Billets de cinéma'),
+    L('Ticketmaster', 'https://www.ticketmaster.dk', 'Koncerter, teater og shows', 'Concerts, theatre and shows', 'Concerts, théâtre et spectacles'),
+  ],
+  vacation: [
+    L('Spies', 'https://www.spies.dk', 'Charter- og pakkerejser', 'Package holidays', 'Voyages organisés'),
+    L('TUI', 'https://www.tui.dk', 'Charter- og pakkerejser', 'Package holidays', 'Voyages organisés'),
+    L('Apollo', 'https://www.apollorejser.dk', 'Charter- og pakkerejser', 'Package holidays', 'Voyages organisés'),
+    L('Bravo Tours', 'https://www.bravotours.dk', 'Charter- og pakkerejser', 'Package holidays', 'Voyages organisés'),
+    L('momondo', 'https://www.momondo.dk', 'Sammenlign fly og hoteller', 'Compare flights and hotels', 'Comparer vols et hôtels'),
+  ],
+  weekend: [
+    L('Booking.com', 'https://www.booking.com', 'Hoteller og ophold', 'Hotels and stays', 'Hôtels et séjours'),
+    L('Airbnb', 'https://www.airbnb.dk', 'Huse og lejligheder', 'Homes and flats', 'Maisons et appartements'),
+    L('Novasol', 'https://www.novasol.dk', 'Sommerhuse', 'Holiday cottages', 'Maisons de vacances'),
+    L('OpdagDanmark', 'https://www.opdagdanmark.dk', 'Ophold og oplevelser i Danmark', 'Stays and experiences in Denmark', 'Séjours et expériences au Danemark'),
+  ],
+  trip: [
+    L('momondo', 'https://www.momondo.dk', 'Sammenlign fly og hoteller', 'Compare flights and hotels', 'Comparer vols et hôtels'),
+    L('Booking.com', 'https://www.booking.com', 'Hoteller og ophold', 'Hotels and stays', 'Hôtels et séjours'),
+    L('Airbnb', 'https://www.airbnb.dk', 'Huse og lejligheder', 'Homes and flats', 'Maisons et appartements'),
+  ],
+  themepark: [],
+  custom: [
+    L('OpdagDanmark', 'https://www.opdagdanmark.dk', 'Oplevelser i hele Danmark', 'Experiences all over Denmark', 'Expériences dans tout le Danemark'),
+  ],
+};
+export const onlineLinks = (kind) => ONLINE[kind] || [];
+
+// What to search for on the map around home, per moment type
+export const MAP_QUERY = {
+  flowers: 'blomsterbutik', takeaway: 'takeaway', restaurant: 'restaurant', date: 'restaurant',
+  movie: 'biograf', themepark: 'forlystelsespark', weekend: 'hotel', surprise: 'gavebutik',
 };
