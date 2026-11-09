@@ -1386,3 +1386,8 @@ end $$;
 select seed_daily_for(id) from families;
 
 revoke execute on function seed_daily_for(uuid) from anon, authenticated, public;
+
+-- ================================================================ house: unique names
+-- Rooms and chore types are unique per family (ignoring case and spaces at the ends)
+create unique index if not exists house_places_unique_name on house_places(family_id, lower(btrim(name)));
+create unique index if not exists house_chores_unique_name on house_chores(family_id, lower(btrim(name)));

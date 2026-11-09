@@ -35,6 +35,7 @@ const STRINGS = {
     house: {
       todo: 'Opgaver', setup: 'Opsætning', log: 'Udført',
       indoor: 'Inde', outdoor: 'Ude', daily: 'Dagligt',
+      dupPlace: '"{name}" findes allerede.', dupChore: 'Opgavetypen "{name}" findes allerede.',
       dailyHint: 'Vælg Dagligt for opgaver uden rum, fx giv kat mad – de er slået til hver dag.',
       mineNow: 'Dem jeg har taget', doneNow: 'Klaret i denne periode',
       nothing: 'Ingen ledige husopgaver lige nu 🎉',
@@ -212,6 +213,7 @@ const STRINGS = {
     house: {
       todo: 'Chores', setup: 'Setup', log: 'Done',
       indoor: 'Indoors', outdoor: 'Outdoors', daily: 'Daily',
+      dupPlace: '"{name}" already exists.', dupChore: 'The chore type "{name}" already exists.',
       dailyHint: 'Pick Daily for chores without a room, e.g. feed the cat – they are on every day.',
       mineNow: 'Ones I took', doneNow: 'Done this period',
       nothing: 'No free house chores right now 🎉',
@@ -389,6 +391,7 @@ const STRINGS = {
     house: {
       todo: 'Tâches', setup: 'Réglages', log: 'Faites',
       indoor: 'Intérieur', outdoor: 'Extérieur', daily: 'Chaque jour',
+      dupPlace: '« {name} » existe déjà.', dupChore: 'Le type de tâche « {name} » existe déjà.',
       dailyHint: 'Choisissez Chaque jour pour les tâches sans pièce, par ex. nourrir le chat – elles sont actives tous les jours.',
       mineNow: 'Celles que j’ai prises', doneNow: 'Faites cette période',
       nothing: 'Aucune tâche ménagère libre pour l’instant 🎉',

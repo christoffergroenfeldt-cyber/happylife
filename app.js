@@ -10,7 +10,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '20'; // keep in step with CACHE in sw.js
+const APP_VERSION = '21'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -1013,6 +1013,9 @@ function houseItemForm(table, item, zone) {
     const z = f.get('zone');
     const row = { name: f.get('name').trim(), outdoor: z === 'out', daily: z === 'daily' };
     if (!row.name) return;
+    // Names are unique per family (ignoring upper/lower case)
+    const same = (isPlace ? S.places : S.chores).find((x) => x.id !== item?.id && x.name.trim().toLowerCase() === row.name.toLowerCase());
+    if (same) return toast(t(isPlace ? 'house.dupPlace' : 'house.dupChore', { name: same.name }), true);
     let choreId = item?.id;
     if (item) {
       await run(sb.from(table).update(row).eq('id', item.id));
