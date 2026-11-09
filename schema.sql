@@ -656,7 +656,7 @@ $$;
 -- Called by the iOS Shortcut (with the public anon key + the personal sync
 -- code). Six lists, one line per event, same order. Rules:
 --   * same number of lines in every list, ISO 8601 dates, Yes/No all-day
---   * at most 3000 events, 40 calendars, titles up to 200 characters
+--   * at most 20000 events, 40 calendars, titles up to 200 characters
 --   * nothing is saved if anything is wrong
 --   * a calendar that sends nothing keeps its events (e.g. access not granted)
 create or replace function sync_calendar(p_token text, p_titles text, p_starts text, p_ends text,
@@ -673,7 +673,7 @@ declare
   a  text[] := regexp_split_to_array(regexp_replace(trim(coalesce(p_allday, '')),    E'\\s*\\r?\\n\\s*', E'\n', 'g'), split_re);
   c  text[] := regexp_split_to_array(regexp_replace(trim(coalesce(p_calendars, '')), E'\\s*\\r?\\n\\s*', E'\n', 'g'), split_re);
   n int; i int; cal user_calendars; t text; d1 date; d2 date; yearly boolean;
-  ev_id uuid; seen_cals uuid[] := '{}'; saved uuid[] := '{}'; n_saved int := 0; n_new_cals int := 0; n_cals int; msg text;
+  inc_names text[]; ev_id uuid; seen_cals uuid[] := '{}'; saved uuid[] := '{}'; n_saved int := 0; n_new_cals int := 0; n_cals int; msg text;
 begin
   select m.* into me from sync_tokens st join members m on m.user_id = st.user_id
    where st.token = trim(coalesce(p_token, ''));
@@ -684,7 +684,7 @@ begin
     raise exception 'Kun mor og far kan synkronisere kalendere.';
   end if;
   if length(coalesce(p_titles,'')) + length(coalesce(p_starts,'')) + length(coalesce(p_ends,''))
-     + length(coalesce(p_calendars,'')) > 1500000 then
+     + length(coalesce(p_calendars,'')) > 8000000 then
     raise exception 'For mange data. Intet blev gemt.';
   end if;
   if coalesce(p_starts, '') ~ '^\s*$' then
@@ -698,7 +698,7 @@ begin
       coalesce(array_length(ti, 1), 0), n, coalesce(array_length(e, 1), 0),
       coalesce(array_length(a, 1), 0), coalesce(array_length(c, 1), 0);
   end if;
-  if n > 3000 then raise exception 'Over 3000 begivenheder. Hent færre dage i genvejen. Intet blev gemt.'; end if;
+  if n > 20000 then raise exception 'Over 20000 begivenheder. Hent færre dage i genvejen. Intet blev gemt.'; end if;
   for i in 1 .. n loop
     if s[i] !~ iso_re or e[i] !~ iso_re or lower(a[i]) !~ flag_re then
       raise exception 'Afvist: begivenhed % har ikke en gyldig start, slut og Ja/Nej. Intet blev gemt.', i;
@@ -725,10 +725,12 @@ begin
     seen_cals := seen_cals || cal.id;
   end loop;
 
-  -- Events from switched-on calendars
+  -- Events from switched-on calendars (skip the rest without touching the table)
+  select coalesce(array_agg(name), '{}') into inc_names
+    from user_calendars where user_id = me.user_id and included and name = any(c);
   for i in 1 .. n loop
+    continue when not (c[i] = any(inc_names));
     select * into cal from user_calendars where user_id = me.user_id and name = c[i];
-    continue when not cal.included;
     t := left(btrim(regexp_replace(ti[i], '[[:cntrl:]]', ' ', 'g')), 200);
     continue when t = '';
     d1 := substr(s[i], 1, 10)::date;
