@@ -543,6 +543,15 @@ alter table tasks add constraint task_event_link
   check ((recurrence = 'event') = (event_id is not null));
 create index if not exists tasks_event on tasks(event_id);
 
+-- Weekly series (found by the calendar sync): one event = "every N weeks from
+-- start_date until repeat_until, except skip_dates" (e.g. a lesson, minus holidays)
+alter table events add column if not exists every_weeks smallint check (every_weeks between 1 and 4);
+alter table events add column if not exists repeat_until date;
+alter table events add column if not exists skip_dates date[] not null default '{}';
+alter table tasks add column if not exists event_every_weeks smallint;
+alter table tasks add column if not exists event_until date;
+alter table tasks add column if not exists event_skips date[] not null default '{}';
+
 alter table events add column if not exists ext_key text;          -- set for imported events
 alter table events add column if not exists imported boolean not null default false;
 create unique index if not exists events_ext_key on events(family_id, ext_key);
@@ -558,6 +567,9 @@ begin
   new.recurrence := 'event';
   new.start_date := ev.start_date;
   new.event_yearly := ev.yearly;
+  new.event_every_weeks := ev.every_weeks;
+  new.event_until := ev.repeat_until;
+  new.event_skips := ev.skip_dates;
   new.due_date := null;
   return new;
 end $$;
@@ -568,11 +580,13 @@ create trigger task_event_copy before insert or update on tasks
 create or replace function event_to_tasks() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
-  update tasks set start_date = new.start_date, event_yearly = new.yearly where event_id = new.id;
+  update tasks set start_date = new.start_date, event_yearly = new.yearly, event_every_weeks = new.every_weeks,
+                   event_until = new.repeat_until, event_skips = new.skip_dates
+   where event_id = new.id;
   return new;
 end $$;
 drop trigger if exists event_to_tasks on events;
-create trigger event_to_tasks after update of start_date, yearly on events
+create trigger event_to_tasks after update of start_date, yearly, every_weeks, repeat_until, skip_dates on events
   for each row execute function event_to_tasks();
 
 -- Only parents attach tasks to events
@@ -674,7 +688,7 @@ declare
   a  text[] := regexp_split_to_array(regexp_replace(trim(coalesce(p_allday, '')),    E'\\s*\\r?\\n\\s*', E'\n', 'g'), split_re);
   c  text[] := regexp_split_to_array(regexp_replace(trim(coalesce(p_calendars, '')), E'\\s*\\r?\\n\\s*', E'\n', 'g'), split_re);
   n int; i int; cal user_calendars; t text;
-  seen_cals uuid[] := '{}'; n_saved int := 0; n_new_cals int := 0; n_cals int; msg text;
+  seen_cals uuid[] := '{}'; n_saved int := 0; n_series int := 0; n_new_cals int := 0; n_cals int; msg text;
 begin
   select m.* into me from sync_tokens st join members m on m.user_id = st.user_id
    where st.token = trim(coalesce(p_token, ''));
@@ -728,7 +742,9 @@ begin
     seen_cals := seen_cals || cal.id;
   end loop;
 
-  -- Events from switched-on calendars, saved in one go (fast even for thousands)
+  -- Events from switched-on calendars, saved in one go (fast even for thousands).
+  -- The same title on the same weekday at least 4 times, every 1 or 2 weeks
+  -- (gaps such as holidays allowed), is stored as ONE weekly series.
   with r as (
     select left(btrim(regexp_replace(x.ti1, '[[:cntrl:]]', ' ', 'g')), 200) as tt,
            substr(x.s1, 1, 10)::date as d1, substr(x.e1, 1, 10)::date as d2,
@@ -737,33 +753,73 @@ begin
       from unnest(ti, s, e, a, c) as x(ti1, s1, e1, a1, c1)   -- one pass (indexing big text arrays is slow)
       join user_calendars uc on uc.user_id = me.user_id and uc.name = x.c1 and uc.included
   ), r2 as (
-    select tt, d1, cal_id, yearly, cal_name, cal_ext_key(tt, d1, yearly) as k,
+    select tt, lower(tt) as lt, d1, cal_id, yearly, cal_name, extract(isodow from d1)::int as dow,
            case when allday_mid and d2 > d1 then d2 - 1 else d2 end as d2   -- all-day events end at midnight the next day
       from r where tt <> ''
+  ), single as (          -- one-day, not-yearly occurrences, one per day
+    select distinct cal_id, lt, dow, d1 from r2 where not yearly and (d2 is null or d2 <= d1)
+  ), gaps as (
+    select cal_id, lt, dow, d1, d1 - lag(d1) over (partition by cal_id, lt, dow order by d1) as gap from single
+  ), ser0 as (
+    select cal_id, lt, dow, min(d1) as d_first, max(d1) as d_last, count(*)::int as n_occ,
+           case when bool_and(gap is null or gap % 14 = 0) then 14 else 7 end as step
+      from gaps group by cal_id, lt, dow having count(*) >= 4
+  ), ser as (            -- not too many gaps: at most as many skipped weeks as real ones
+    select ser0.*, (select min(tt) from r2 where r2.cal_id = ser0.cal_id and r2.lt = ser0.lt and r2.dow = ser0.dow) as title,
+           (select name from user_calendars where id = ser0.cal_id) as cal_name,
+           array(select g::date from generate_series(d_first, d_last, make_interval(days => step)) g
+                  where g::date not in (select d1 from single sg where sg.cal_id = ser0.cal_id and sg.lt = ser0.lt and sg.dow = ser0.dow)
+                  order by 1) as skips
+      from ser0 where (d_last - d_first) / step + 1 - n_occ <= n_occ
+  ), src as (
+    select cal_ext_key(r2.tt, r2.d1, r2.yearly) as k, r2.tt as title, r2.cal_name, r2.d1 as start_date,
+           case when not r2.yearly and r2.d2 > r2.d1 then r2.d2 end as end_date, r2.yearly,
+           null::smallint as every_weeks, null::date as repeat_until, '{}'::date[] as skip_dates, r2.cal_id
+      from r2
+     where r2.yearly or (r2.d2 is not null and r2.d2 > r2.d1)
+        or not exists (select 1 from ser where ser.cal_id = r2.cal_id and ser.lt = r2.lt and ser.dow = r2.dow)
+    union all
+    select 'w|' || lt || '|' || dow || '|' || (step / 7), title, cal_name, d_first, null, false,
+           (step / 7)::smallint, d_last, skips, cal_id
+      from ser
   ), up as (
-    insert into events(family_id, type, title, start_date, end_date, yearly, remind_days, roles,
-                       created_by, ext_key, imported)
-    select distinct on (k) me.family_id, cal_guess_type(tt, cal_name), tt, d1,
-           case when not yearly and d2 > d1 then d2 end, yearly, 7, '{mother,father}', me.user_id, k, true
-      from r2 order by k
+    insert into events(family_id, type, title, start_date, end_date, yearly, every_weeks, repeat_until, skip_dates,
+                       remind_days, roles, created_by, ext_key, imported)
+    select distinct on (k) me.family_id, cal_guess_type(title, cal_name), title, start_date, end_date, yearly,
+           every_weeks, repeat_until, skip_dates, case when every_weeks is null then 7 else 1 end,
+           '{mother,father}', me.user_id, k, true
+      from src order by k, start_date
     on conflict (family_id, ext_key) do update
-      set end_date = case when events.yearly then null else excluded.end_date end
+      set end_date = case when events.yearly then null else excluded.end_date end,
+          -- a series keeps its earlier start (and skipped weeks before this sync's window)
+          start_date = case when excluded.every_weeks is null then events.start_date
+                            when events.start_date < excluded.start_date
+                             and (excluded.start_date - events.start_date) % (7 * excluded.every_weeks) = 0
+                            then events.start_date else excluded.start_date end,
+          repeat_until = excluded.repeat_until,
+          skip_dates = case when excluded.every_weeks is null then '{}'::date[]
+                            else array(select d from unnest(events.skip_dates) d where d < excluded.start_date)
+                                 || excluded.skip_dates end
     returning id, ext_key
   )
   insert into event_sources(event_id, user_id, calendar_id)
-  select distinct up.id, me.user_id, r2.cal_id from up join r2 on r2.k = up.ext_key
+  select distinct up.id, me.user_id, src.cal_id from up join src on src.k = up.ext_key
   on conflict (event_id, user_id, calendar_id) do update set last_seen = now();
-  select count(distinct event_id) into n_saved from event_sources
-   where user_id = me.user_id and last_seen = now();
+  select count(distinct es.event_id), count(distinct es.event_id) filter (where ev.every_weeks is not null)
+    into n_saved, n_series
+    from event_sources es join events ev on ev.id = es.event_id
+   where es.user_id = me.user_id and es.last_seen = now();
 
   -- Events no longer in a calendar that sent something this time
   delete from event_sources es
    where es.user_id = me.user_id and es.calendar_id = any(seen_cals)
      and es.last_seen < now()   -- now() = start of this run; rows seen in this run equal it
-     and not exists (select 1 from events ev where ev.id = es.event_id and ev.start_date < current_date and not ev.yearly);
+     and not exists (select 1 from events ev where ev.id = es.event_id and ev.start_date < current_date
+                     and not ev.yearly and ev.every_weeks is null);
   perform remove_orphan_events(me.family_id);
 
-  msg := format('Happy Life: %s begivenheder fra %s af %s kalendere.', n_saved,
+  msg := format('Happy Life: %s begivenheder%s fra %s af %s kalendere.', n_saved,
+                case when n_series > 0 then format(' (heraf %s ugentlige)', n_series) else '' end,
                 (select count(*) from user_calendars where id = any(seen_cals) and included), n_cals);
   if n_new_cals > 0 then
     msg := msg || format(' %s nye kalendere – slå dem til i appen under Familie, hvis de skal med.', n_new_cals);

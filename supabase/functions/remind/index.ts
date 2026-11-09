@@ -22,6 +22,7 @@ type Task = {
   start_date: string; due_date: string | null; created_by: string | null;
   remind_time: string | null; remind_days_before: number;
   days_before?: number; event_yearly?: boolean;
+  event_every_weeks?: number | null; event_until?: string | null; event_skips?: string[];
 };
 type Member = { user_id: string; roles: string[] };
 type Done = { done_by: string; period: string };
@@ -77,6 +78,13 @@ function periodEnd(task: Task, day: string): string | null {
 }
 
 // Local date and time ('YYYY-MM-DD', 'HH:MM') in the family's time zone
+// Is `day` one of the dates of a weekly series (every N weeks, until, minus skipped weeks)?
+function isWeeklyOcc(task: Task, day: string) {
+  const diff = daysBetween(task.start_date, day);
+  return diff >= 0 && diff % (7 * (task.event_every_weeks || 1)) === 0
+    && !(task.event_until && day > task.event_until) && !(task.event_skips || []).includes(day);
+}
+
 export function localNow(tz: string, at = new Date()) {
   const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
     timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
@@ -95,7 +103,8 @@ export function dueOccurrence(task: Task, today: string, now: string) {
   if (task.recurrence === 'event') {
     // deadline = event date minus days_before
     const occ = addDays(deadline, task.days_before || 0);
-    const isOcc = task.event_yearly ? nextYearly(task.start_date, occ) === occ : task.start_date === occ;
+    const isOcc = task.event_yearly ? nextYearly(task.start_date, occ) === occ
+      : task.event_every_weeks ? isWeeklyOcc(task, occ) : task.start_date === occ;
     return isOcc ? { period: occ, deadline, before } : null;
   }
   if (task.recurrence === 'once') {

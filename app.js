@@ -393,7 +393,7 @@ function viewHome() {
   // Events within their reminder window
   const upcoming = S.events
     .map((ev) => ({ ev, st: eventStatus(ev, td) }))
-    .filter(({ ev, st }) => st.ongoing || (st.days >= 0 && st.days <= ev.remind_days))
+    .filter(({ ev, st }) => !ev.every_weeks && (st.ongoing || (st.days >= 0 && st.days <= ev.remind_days)))
     .sort((a, b) => a.st.days - b.st.days);
 
   // Tasks for me in the current period
@@ -557,7 +557,8 @@ function taskForm(task, planId, preset = null) {
       <p class="hint">${esc(t('pointsHelp'))}</p>` : ''}
       ${isEvent ? `<input type="hidden" name="recurrence" value="event">
       <label>${t('daysBeforeField')}<input name="days_before" type="number" min="0" max="365" value="${tk.days_before || 0}"></label>
-      <p class="hint">${esc(t(ev?.yearly || tk.event_yearly ? 'eventTaskHelpYearly' : 'eventTaskHelp'))}</p>`
+      <p class="hint">${esc(t(ev?.every_weeks || tk.event_every_weeks ? 'eventTaskHelpWeekly'
+        : ev?.yearly || tk.event_yearly ? 'eventTaskHelpYearly' : 'eventTaskHelp'))}</p>`
       : `<label>${t('recurrence')}<select name="recurrence">${recs.map((r) =>
         `<option value="${r}" ${r === tk.recurrence ? 'selected' : ''}>${esc(t('rec.' + r))}</option>`).join('')}</select></label>`}
       <label data-rec="custom">${t('intervalN')}<input name="interval_days" type="number" min="1" value="${tk.interval_days || 3}"></label>
@@ -859,7 +860,8 @@ function logOtherForm(trId) {
 
 function eventRow(ev, st) {
   const when = st.ongoing ? t('ongoing') : st.days === 0 ? t('isToday') : st.days > 0 ? t('inDays', st.days) : '';
-  const range = ev.end_date ? `${fmtDate(ev.start_date, getLang())} – ${fmtDate(ev.end_date, getLang())}` : fmtDate(st.date, getLang());
+  const range = ev.every_weeks ? weeklyLabel(ev, st)
+    : ev.end_date ? `${fmtDate(ev.start_date, getLang())} – ${fmtDate(ev.end_date, getLang())}` : fmtDate(st.date, getLang());
   const nTasks = isParent() ? S.tasks.filter((x) => x.event_id === ev.id).length : 0;
   // imported birthdays have no known first year, so no "N years"
   const years = ev.yearly && !ev.imported && st.years > 0 ? ` · ${esc(t('years', st.years))}` : '';
@@ -871,17 +873,30 @@ function eventRow(ev, st) {
     </div>`;
 }
 
+// "Hver mandag · næste 16. nov."
+function weeklyLabel(ev, st) {
+  const lang = getLang();
+  const day = new Date(`${ev.start_date}T12:00:00Z`).toLocaleDateString({ da: 'da-DK', en: 'en-GB', fr: 'fr-FR' }[lang] || 'da-DK', { weekday: 'long', timeZone: 'UTC' });
+  const every = t(ev.every_weeks === 2 ? 'every2Weekday' : 'everyWeekday', { d: day });
+  const done = st.days < 0;
+  return `${every} · ${t(done ? 'ended' : 'nextOn', { d: fmtDate(st.date, lang) })}`;
+}
+
 function viewCalendar() {
   const td = today();
-  const list = S.events.map((ev) => ({ ev, st: eventStatus(ev, td) }));
+  const all = S.events.map((ev) => ({ ev, st: eventStatus(ev, td) }));
+  // weekly series (lessons etc.) get their own folded section, so they don't crowd the list
+  const weekly = all.filter(({ ev, st }) => ev.every_weeks && st.days >= 0).sort((a, b) => a.st.days - b.st.days);
+  const list = all.filter((x) => !weekly.includes(x));
   const future = list.filter(({ ev, st }) => st.ongoing || st.days >= 0 || (ev.end_date && ev.end_date >= td))
     .sort((a, b) => a.st.days - b.st.days);
-  const past = list.filter((x) => !future.includes(x)).sort((a, b) => b.ev.start_date.localeCompare(a.ev.start_date));
+  const past = list.filter((x) => !future.includes(x)).sort((a, b) => b.st.date.localeCompare(a.st.date));
   const syncHint = isParent() && !S.sync?.last_sync_at
     ? `<p class="hint">📱 ${esc(t('calSyncHint'))} <button class="link" data-act="tab" data-id="family">${t('tabs.family')} →</button></p>` : '';
   return `<div class="toolbar"><button class="primary" data-act="newEvent">＋ ${t('newEvent')}</button></div>
     ${isParent() && S.events.length ? `<p class="hint">${esc(t('tapEventForTasks'))}</p>` : ''}
     ${future.length ? `<div class="list">${future.map(({ ev, st }) => eventRow(ev, st)).join('')}</div>` : `<p class="empty">${esc(t('noEvents'))}</p>`}
+    ${weekly.length ? `<details class="weekly"><summary>🔁 ${esc(t('weeklyEvents'))} (${weekly.length})</summary><div class="list">${weekly.map(({ ev, st }) => eventRow(ev, st)).join('')}</div></details>` : ''}
     ${syncHint}
     ${past.length ? `<details><summary>${t('history')}</summary><div class="list">${past.map(({ ev, st }) => eventRow(ev, st)).join('')}</div></details>` : ''}`;
 }

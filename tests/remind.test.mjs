@@ -88,6 +88,20 @@ test('event task: one-off event only on its date; Feb 29 birthday on Feb 28', ()
   assert.equal(dueOccurrence(leap, '2027-02-28', '08:00').period, '2027-02-28');
 });
 
+test('event task: weekly series (lesson) every week, not in skipped weeks or after the end', () => {
+  // Idræt every Tuesday from 10 Nov 2026 to 15 Dec, holiday week 24 Nov skipped
+  const bag = task({ recurrence: 'event', start_date: '2026-11-10', event_every_weeks: 1, event_until: '2026-12-15',
+    event_skips: ['2026-11-24'], days_before: 1, remind_time: '19:00' });
+  assert.equal(dueOccurrence(bag, '2026-11-09', '19:30').period, '2026-11-10');
+  assert.equal(dueOccurrence(bag, '2026-11-16', '19:30').period, '2026-11-17');
+  assert.equal(dueOccurrence(bag, '2026-11-23', '19:30'), null);   // holiday
+  assert.equal(dueOccurrence(bag, '2026-11-10', '19:30'), null);   // not the day before
+  assert.equal(dueOccurrence(bag, '2026-12-21', '19:30'), null);   // ended
+  const swim = task({ recurrence: 'event', start_date: '2026-11-11', event_every_weeks: 2, days_before: 0 });
+  assert.equal(dueOccurrence(swim, '2026-11-25', '08:00').period, '2026-11-25');
+  assert.equal(dueOccurrence(swim, '2026-11-18', '08:00'), null);
+});
+
 const members = [
   { user_id: 'dad', roles: ['father', 'husband'] }, { user_id: 'mum', roles: ['mother', 'wife'] },
   { user_id: 'anna', roles: ['child'] }, { user_id: 'emil', roles: ['child'] },

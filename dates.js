@@ -45,6 +45,17 @@ export function nextYearly(startIso, today) {
   return thisYear >= today ? thisYear : make(y + 1);
 }
 
+// Weekly series (imported lessons etc.): next date >= today, or null when it has ended.
+// ev: { start_date, every_weeks, repeat_until, skip_dates }
+export function nextWeekly(ev, today) {
+  const step = 7 * Math.max(1, ev.every_weeks || 1);
+  const skips = new Set(ev.skip_dates || []);
+  let d = ev.start_date;
+  if (today > d) d = addDays(d, Math.ceil(daysBetween(d, today) / step) * step);
+  for (let i = 0; i <= skips.size && skips.has(d); i++) d = addDays(d, step);
+  return ev.repeat_until && d > ev.repeat_until ? null : d;
+}
+
 // Status of a moment: { last, since, dueIn } — dueIn <= 0 means it's time
 export function trackerStatus(intervalDays, entryDates, today) {
   const last = entryDates.length ? entryDates.reduce((a, b) => (a > b ? a : b)) : null;
@@ -56,6 +67,10 @@ export function trackerStatus(intervalDays, entryDates, today) {
 // Event tasks: the event date they are for next (null when a one-off event has passed)
 export function eventOccurrence(task, today) {
   if (task.event_yearly) return nextYearly(task.start_date, today);
+  if (task.event_every_weeks) {
+    return nextWeekly({ start_date: task.start_date, every_weeks: task.event_every_weeks,
+      repeat_until: task.event_until, skip_dates: task.event_skips }, today);
+  }
   return task.start_date >= today ? task.start_date : null;
 }
 
@@ -72,7 +87,9 @@ export function periodKey(task, today) {
     const occ = eventOccurrence(task, today);
     if (!occ) return null;
     const deadline = addDays(occ, -(task.days_before || 0));
-    return daysBetween(today, deadline) > EVENT_LEAD_DAYS ? null : occ;
+    // weekly series: only the day before the deadline (else it would always be on Home)
+    const lead = task.event_every_weeks ? 1 : EVENT_LEAD_DAYS;
+    return daysBetween(today, deadline) > lead ? null : occ;
   }
   if (task.start_date && today < task.start_date && task.recurrence !== 'once') return null;
   switch (task.recurrence) {
@@ -119,6 +136,10 @@ export function eventStatus(ev, today) {
     const date = nextYearly(ev.start_date, today);
     const years = Number(date.slice(0, 4)) - Number(ev.start_date.slice(0, 4));
     return { date, days: daysBetween(today, date), ongoing: false, years };
+  }
+  if (ev.every_weeks) {
+    const date = nextWeekly(ev, today) || ev.repeat_until || ev.start_date;   // ended -> its last date (in the past)
+    return { date, days: daysBetween(today, date), ongoing: false, years: 0 };
   }
   const end = ev.end_date || ev.start_date;
   if (ev.start_date <= today && end >= today && ev.end_date) {
