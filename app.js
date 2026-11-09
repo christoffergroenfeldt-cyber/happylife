@@ -10,7 +10,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '19'; // keep in step with CACHE in sw.js
+const APP_VERSION = '20'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -448,25 +448,43 @@ function viewHome() {
     .filter(({ ev, st }) => !ev.every_weeks && (st.ongoing || (st.days >= 0 && st.days <= ev.remind_days)))
     .sort((a, b) => a.st.days - b.st.days);
 
-  // Tasks for me in the current period (house chores only once I've taken them)
-  const all = S.tasks.map((task) => ({ task, st: taskState(task) }));
-  const mine = all.filter(({ task, st }) => st.active && !st.done && (isHouse(task) ? st.took
-    : st.kind === 'open' ? (st.took || !st.full) : st.forMe));
-  const houseFree = all.filter(({ task, st }) => isHouse(task) && st.active && !st.done && !st.took && !st.full).length;
+  const all = S.tasks.map((task) => ({ task, st: taskState(task) })).filter(({ st }) => st.active && !st.done);
+  // Free tasks nobody has taken yet: daily chores, family tasks, then rooms inside and outside
+  const zoneRank = (task) => (!isHouse(task) ? 1 : { daily: 0, in: 2, out: 3 }[zoneOf(byId(S.places, task.place_id) || {})] ?? 2);
+  const free = all.filter(({ st }) => st.kind === 'open' && !st.took && !st.full)
+    .sort((a, b) => zoneRank(a.task) - zoneRank(b.task)
+      || sortOf(S.places, a.task.place_id) - sortOf(S.places, b.task.place_id)
+      || sortOf(S.chores, a.task.chore_id) - sortOf(S.chores, b.task.chore_id));
+  // Mine: taken by me, or given to me / my role
+  const mine = all.filter(({ st }) => (st.kind === 'open' ? st.took : st.forMe));
+  const row = ({ task, st }) => (isHouse(task) ? houseRow(task, st, true) : taskRow(task, st));
+  const FIRST = 8;
+
+  // "Time for something special" grouped like Øjeblikke: whole family / just us
+  const famDue = due.filter((x) => isFamilyMoment(x.tr)), ownDue = due.filter((x) => !isFamilyMoment(x.tr));
+  const both = famDue.length && ownDue.length;
+  const mtab = !both ? (famDue.length ? 'family' : 'own') : S.momentTab === 'own' ? 'own' : 'family';
+  const shown = mtab === 'family' ? famDue : ownDue;
+  const pick = both ? `<div class="seg zone-seg">
+      <button data-act="momentTab" data-id="family" class="${mtab === 'family' ? 'on' : ''}">👨‍👩‍👧‍👦 ${esc(t('momentsFamily'))} (${famDue.length})</button>
+      <button data-act="momentTab" data-id="own" class="${mtab === 'own' ? 'on' : ''}">💛 ${esc(t('momentsOwn'))} (${ownDue.length})</button></div>`
+    : `<h3 class="subhead">${esc(t(mtab === 'family' ? 'momentsFamily' : 'momentsOwn'))}</h3>`;
 
   return `
     <p class="hello">${esc(t('hello', { name: S.me.display_name }))}</p>
     ${pointsCard()}
-    ${due.length ? `<h2>${esc(t('timeFor'))}</h2>${due.map(({ tr, st }) => momentCard(tr, st, true)).join('')}` : ''}
+    ${free.length ? `<h2>${esc(t('freeTasks'))}</h2>
+      <div class="list">${free.slice(0, FIRST).map(row).join('')}</div>
+      ${free.length > FIRST ? `<details class="more"><summary>${esc(t('showAll'))} (${free.length})</summary>
+        <div class="list">${free.slice(FIRST).map(row).join('')}</div></details>` : ''}` : ''}
     <h2>${esc(t('upcoming'))}</h2>
     ${plannedSoon.map(plannedRow).join('')}
     ${upcoming.length ? upcoming.map(({ ev, st }) => eventRow(ev, st)).join('') : plannedSoon.length ? '' : `<p class="empty">${esc(t('noUpcoming'))}</p>`}
-    <h2>${esc(t('today'))}</h2>
-    ${mine.length ? `<div class="list">${mine.map(({ task, st }) => taskRow(task, st)).join('')}</div>`
+    <h2>${esc(t('myToday'))}</h2>
+    ${mine.length ? `<div class="list">${mine.map(row).join('')}</div>`
                   : `<p class="empty">${esc(t('nothingToday'))}</p>`}
-    ${houseFree ? `<button class="row go" data-act="tab" data-id="house"><span class="lead big">🧹</span>
-      <span class="body"><span class="ttl">${esc(t('houseHome', houseFree))}</span></span><span class="arrow">›</span></button>` : ''}
-    ${!due.length && !mine.length ? `<p class="allgood">${esc(t('allGood'))}</p>` : ''}`;
+    ${due.length ? `<h2>${esc(t('timeFor'))}</h2>${pick}${shown.map(({ tr, st }) => momentCard(tr, st, true)).join('')}` : ''}
+    ${!due.length && !mine.length && !free.length ? `<p class="allgood">${esc(t('allGood'))}</p>` : ''}`;
 }
 
 // ------------------------------------------------------------ tasks + plans

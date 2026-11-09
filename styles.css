@@ -406,3 +406,7 @@ h3.day:first-letter { text-transform: uppercase; }
 .top button.refresh { align-self: center; font-size: 1.25rem; padding: 4px 8px; margin-left: -4px; }
 .top .fam { flex: 1; text-align: right; }
 .version { text-align: center; color: var(--muted); font-size: .8rem; margin: 8px 0 0; }
+
+/* home: rest of the free tasks, moment group label */
+details.more > summary { margin: 10px 0 8px; font-weight: 700; }
+h3.subhead { font-size: .95rem; color: var(--muted); margin: 0 0 8px; }
