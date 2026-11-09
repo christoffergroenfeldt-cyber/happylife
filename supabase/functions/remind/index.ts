@@ -77,7 +77,6 @@ function periodEnd(task: Task, day: string): string | null {
   }
 }
 
-// Local date and time ('YYYY-MM-DD', 'HH:MM') in the family's time zone
 // Is `day` one of the dates of a weekly series (every N weeks, until, minus skipped weeks)?
 function isWeeklyOcc(task: Task, day: string) {
   const diff = daysBetween(task.start_date, day);
@@ -85,6 +84,7 @@ function isWeeklyOcc(task: Task, day: string) {
     && !(task.event_until && day > task.event_until) && !(task.event_skips || []).includes(day);
 }
 
+// Local date and time ('YYYY-MM-DD', 'HH:MM') in the family's time zone
 export function localNow(tz: string, at = new Date()) {
   const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
     timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
