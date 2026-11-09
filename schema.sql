@@ -661,7 +661,8 @@ $$;
 --   * a calendar that sends nothing keeps its events (e.g. access not granted)
 create or replace function sync_calendar(p_token text, p_titles text, p_starts text, p_ends text,
                                          p_allday text, p_calendars text)
-returns text language plpgsql security definer set search_path = public as $$
+returns text language plpgsql security definer set search_path = public
+set statement_timeout = '30s' as $$
 declare
   iso_re  constant text := '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}(:?\d{2})?)$';
   flag_re constant text := '^(yes|no|true|false|1|0|ja|nej|oui|non)$';
@@ -672,8 +673,8 @@ declare
   e  text[] := regexp_split_to_array(regexp_replace(trim(coalesce(p_ends, '')),      E'\\s*\\r?\\n\\s*', E'\n', 'g'), split_re);
   a  text[] := regexp_split_to_array(regexp_replace(trim(coalesce(p_allday, '')),    E'\\s*\\r?\\n\\s*', E'\n', 'g'), split_re);
   c  text[] := regexp_split_to_array(regexp_replace(trim(coalesce(p_calendars, '')), E'\\s*\\r?\\n\\s*', E'\n', 'g'), split_re);
-  n int; i int; cal user_calendars; t text; d1 date; d2 date; yearly boolean;
-  inc_names text[]; ev_id uuid; seen_cals uuid[] := '{}'; saved uuid[] := '{}'; n_saved int := 0; n_new_cals int := 0; n_cals int; msg text;
+  n int; i int; cal user_calendars; t text;
+  seen_cals uuid[] := '{}'; n_saved int := 0; n_new_cals int := 0; n_cals int; msg text;
 begin
   select m.* into me from sync_tokens st join members m on m.user_id = st.user_id
    where st.token = trim(coalesce(p_token, ''));
@@ -699,14 +700,16 @@ begin
       coalesce(array_length(a, 1), 0), coalesce(array_length(c, 1), 0);
   end if;
   if n > 20000 then raise exception 'Over 20000 begivenheder. Hent færre dage i genvejen. Intet blev gemt.'; end if;
-  for i in 1 .. n loop
-    if s[i] !~ iso_re or e[i] !~ iso_re or lower(a[i]) !~ flag_re then
-      raise exception 'Afvist: begivenhed % har ikke en gyldig start, slut og Ja/Nej. Intet blev gemt.', i;
-    end if;
-    if length(c[i]) not between 1 and 100 or c[i] ~ '[[:cntrl:]]' then
-      raise exception 'Afvist: begivenhed % har et ugyldigt kalendernavn. Intet blev gemt.', i;
-    end if;
-  end loop;
+  select min(x.k) into i from unnest(s, e, a) with ordinality as x(s1, e1, a1, k)
+   where x.s1 !~ iso_re or x.e1 !~ iso_re or lower(x.a1) !~ flag_re;
+  if i is not null then
+    raise exception 'Afvist: begivenhed % har ikke en gyldig start, slut og Ja/Nej. Intet blev gemt.', i;
+  end if;
+  select min(x.k) into i from unnest(c) with ordinality as x(c1, k)
+   where length(x.c1) not between 1 and 100 or x.c1 ~ '[[:cntrl:]]';
+  if i is not null then
+    raise exception 'Afvist: begivenhed % har et ugyldigt kalendernavn. Intet blev gemt.', i;
+  end if;
   select count(distinct x) into n_cals from unnest(c) x;
   if n_cals > 40 then raise exception 'Over 40 kalendere. Intet blev gemt.'; end if;
 
@@ -725,33 +728,33 @@ begin
     seen_cals := seen_cals || cal.id;
   end loop;
 
-  -- Events from switched-on calendars (skip the rest without touching the table)
-  select coalesce(array_agg(name), '{}') into inc_names
-    from user_calendars where user_id = me.user_id and included and name = any(c);
-  for i in 1 .. n loop
-    continue when not (c[i] = any(inc_names));
-    select * into cal from user_calendars where user_id = me.user_id and name = c[i];
-    t := left(btrim(regexp_replace(ti[i], '[[:cntrl:]]', ' ', 'g')), 200);
-    continue when t = '';
-    d1 := substr(s[i], 1, 10)::date;
-    d2 := substr(e[i], 1, 10)::date;
-    if lower(a[i]) in ('yes','true','1','ja','oui') and substr(e[i], 12, 5) = '00:00' and d2 > d1 then
-      d2 := d2 - 1;  -- all-day events end at midnight the next day
-    end if;
-    if d2 <= d1 then d2 := null; end if;
-    yearly := cal.yearly;
+  -- Events from switched-on calendars, saved in one go (fast even for thousands)
+  with r as (
+    select left(btrim(regexp_replace(x.ti1, '[[:cntrl:]]', ' ', 'g')), 200) as tt,
+           substr(x.s1, 1, 10)::date as d1, substr(x.e1, 1, 10)::date as d2,
+           lower(x.a1) in ('yes','true','1','ja','oui') and substr(x.e1, 12, 5) = '00:00' as allday_mid,
+           uc.id as cal_id, uc.yearly, uc.name as cal_name
+      from unnest(ti, s, e, a, c) as x(ti1, s1, e1, a1, c1)   -- one pass (indexing big text arrays is slow)
+      join user_calendars uc on uc.user_id = me.user_id and uc.name = x.c1 and uc.included
+  ), r2 as (
+    select tt, d1, cal_id, yearly, cal_name, cal_ext_key(tt, d1, yearly) as k,
+           case when allday_mid and d2 > d1 then d2 - 1 else d2 end as d2   -- all-day events end at midnight the next day
+      from r where tt <> ''
+  ), up as (
     insert into events(family_id, type, title, start_date, end_date, yearly, remind_days, roles,
                        created_by, ext_key, imported)
-      values (me.family_id, cal_guess_type(t, cal.name), t, d1, case when yearly then null else d2 end,
-              yearly, 7, '{mother,father}', me.user_id, cal_ext_key(t, d1, yearly), true)
-      on conflict (family_id, ext_key) do update
-        set end_date = case when events.yearly then null else excluded.end_date end
-      returning id into ev_id;
-    insert into event_sources(event_id, user_id, calendar_id) values (ev_id, me.user_id, cal.id)
-      on conflict (event_id, user_id, calendar_id) do update set last_seen = now();
-    if not ev_id = any(saved) then saved := saved || ev_id; end if;
-  end loop;
-  n_saved := coalesce(array_length(saved, 1), 0);
+    select distinct on (k) me.family_id, cal_guess_type(tt, cal_name), tt, d1,
+           case when not yearly and d2 > d1 then d2 end, yearly, 7, '{mother,father}', me.user_id, k, true
+      from r2 order by k
+    on conflict (family_id, ext_key) do update
+      set end_date = case when events.yearly then null else excluded.end_date end
+    returning id, ext_key
+  )
+  insert into event_sources(event_id, user_id, calendar_id)
+  select distinct up.id, me.user_id, r2.cal_id from up join r2 on r2.k = up.ext_key
+  on conflict (event_id, user_id, calendar_id) do update set last_seen = now();
+  select count(distinct event_id) into n_saved from event_sources
+   where user_id = me.user_id and last_seen = now();
 
   -- Events no longer in a calendar that sent something this time
   delete from event_sources es
