@@ -1447,3 +1447,10 @@ grant select, insert, delete on nearby_places to authenticated;
 
 revoke execute on function set_home(text, double precision, double precision, int) from anon, public;
 grant execute on function set_home(text, double precision, double precision, int) to authenticated;
+
+-- ================================================================ calendar: show the source calendar
+-- A parent may read which of their own phone calendars each imported event
+-- comes from (for the calendar name and filter in Kalender).
+drop policy if exists es_select on event_sources;
+create policy es_select on event_sources for select using (user_id = auth.uid());
+grant select on event_sources to authenticated;

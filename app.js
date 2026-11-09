@@ -12,7 +12,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '22'; // keep in step with CACHE in sw.js
+const APP_VERSION = '23'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -132,15 +132,17 @@ async function loadAll() {
   S.suggestions = sugg || [];
   if (isParent()) {
     const td = today();
-    const [sync, calendars, inbox] = await Promise.all([
+    const [sync, calendars, inbox, evSources] = await Promise.all([
       run(sb.from('sync_tokens').select('*').maybeSingle()),
       run(sb.from('user_calendars').select('*').order('name')),
       // Find events: what is still coming (a missing table just means an older database)
       sb.from('calendar_inbox').select('*')
         .or(`start_date.gte.${td},end_date.gte.${td},repeat_until.gte.${td}`)
         .order('start_date').order('start_time', { nullsFirst: true }).then((r) => r.data || []),
+      // which of my phone calendars each imported event comes from
+      sb.from('event_sources').select('event_id, calendar_id').then((r) => r.data || []),
     ]);
-    Object.assign(S, { sync, calendars, inbox });
+    Object.assign(S, { sync, calendars, inbox, evSources });
   }
 }
 
@@ -1393,6 +1395,15 @@ function logOtherForm(trId) {
 
 // ------------------------------------------------------------ calendar
 
+// Names of my phone calendars an event comes from (other parents' calendars are private)
+const CAL_DOTS = ['#2F6FB3', '#E58A2E', '#8B5CF6', '#0E9F6E', '#D9536A', '#B7791F', '#0891B2', '#6B7280'];
+const evCalIds = (ev) => [...new Set((S.evSources || []).filter((x) => x.event_id === ev.id).map((x) => x.calendar_id))];
+const calDot = (id) => {
+  const i = S.calendars.findIndex((c) => c.id === id);
+  return `<span class="caldot" style="background:${CAL_DOTS[(i < 0 ? 0 : i) % CAL_DOTS.length]}"></span>`;
+};
+function calFilter() { const f = store('hl-calf'); return f || 'all'; }
+
 function eventRow(ev, st) {
   const when = st.ongoing ? t('ongoing') : st.days === 0 ? t('isToday') : st.days > 0 ? t('inDays', st.days) : '';
   const range = ev.every_weeks ? weeklyLabel(ev, st)
@@ -1404,7 +1415,7 @@ function eventRow(ev, st) {
     <div class="row event" data-act="editEvent" data-id="${ev.id}">
       <div class="lead big">${eventIcon(ev.type)}</div>
       <div class="body"><div class="ttl">${esc(ev.title)}${years}</div>
-        <div class="meta">${esc(range)}${when ? ` · <strong>${esc(when)}</strong>` : ''}${ev.imported ? ' · 📱' : ''}${nTasks ? ` · ✅ ${esc(t('nTasks', nTasks))}` : ''}</div></div>
+        <div class="meta">${esc(range)}${when ? ` · <strong>${esc(when)}</strong>` : ''}${ev.imported ? ` · 📱${evCalIds(ev).map((c) => ` ${calDot(c)}${esc(calName(c))}`).join(',')}` : ''}${nTasks ? ` · ✅ ${esc(t('nTasks', nTasks))}` : ''}</div></div>
     </div>`;
 }
 
@@ -1420,7 +1431,18 @@ function weeklyLabel(ev, st) {
 function viewCalendar() {
   if (S.calView === 'find' && isParent()) return viewFind();
   const td = today();
-  const all = S.events.map((ev) => ({ ev, st: eventStatus(ev, td) }));
+  // Filter by calendar: all, made in the app, or one of my phone calendars
+  const cals = isParent() ? S.calendars.filter((c) => S.events.some((ev) => evCalIds(ev).includes(c.id))) : [];
+  let cf = calFilter();
+  if (cf !== 'all' && cf !== 'own' && !cals.some((c) => c.id === cf)) cf = 'all';
+  const inFilter = (ev) => cf === 'all' || (cf === 'own' ? !ev.imported : evCalIds(ev).includes(cf));
+  const count = (fn) => S.events.filter(fn).length;
+  const chips = cals.length ? `<div class="kind-chips cal-chips">
+      <button class="hchip ${cf === 'all' ? 'on' : ''}" data-act="calFilter" data-id="all">${esc(t('calFilterAll'))} (${S.events.length})</button>
+      ${count((ev) => !ev.imported) ? `<button class="hchip ${cf === 'own' ? 'on' : ''}" data-act="calFilter" data-id="own">✏️ ${esc(t('calFilterOwn'))} (${count((ev) => !ev.imported)})</button>` : ''}
+      ${cals.map((c) => `<button class="hchip ${cf === c.id ? 'on' : ''}" data-act="calFilter" data-id="${c.id}">${calDot(c.id)}${esc(c.name)} (${count((ev) => evCalIds(ev).includes(c.id))})</button>`).join('')}
+    </div>` : '';
+  const all = S.events.filter(inFilter).map((ev) => ({ ev, st: eventStatus(ev, td) }));
   // weekly series (lessons etc.) get their own folded section, so they don't crowd the list
   const weekly = all.filter(({ ev, st }) => ev.every_weeks && st.days >= 0).sort((a, b) => a.st.days - b.st.days);
   const list = all.filter((x) => !weekly.includes(x));
@@ -1433,6 +1455,7 @@ function viewCalendar() {
   const findBtn = isParent() && (S.inbox.length || S.calendars.some((c) => c.pick))
     ? `<button data-act="calView" data-id="find">🔍 ${t('findEvents')}${nNew ? ` <span class="badge">${nNew}</span>` : ''}</button>` : '';
   return `<div class="toolbar"><button class="primary" data-act="newEvent">＋ ${t('newEvent')}</button>${findBtn}</div>
+    ${chips}
     ${isParent() && S.events.length ? `<p class="hint">${esc(t('tapEventForTasks'))}</p>` : ''}
     ${future.length ? `<div class="list">${future.map(({ ev, st }) => eventRow(ev, st)).join('')}</div>` : `<p class="empty">${esc(t('noEvents'))}</p>`}
     ${weekly.length ? `<details class="weekly"><summary>🔁 ${esc(t('weeklyEvents'))} (${weekly.length})</summary><div class="list">${weekly.map(({ ev, st }) => eventRow(ev, st)).join('')}</div></details>` : ''}
@@ -1897,6 +1920,7 @@ const ACTIONS = {
   houseMode: (id) => { S.houseMode = id; render(); window.scrollTo(0, 0); },
   setupZone: (id) => { S.setupZone = id; render(); window.scrollTo(0, 0); },
   momentTab: (id) => { S.momentTab = id; render(); window.scrollTo(0, 0); },
+  calFilter: (id) => { store('hl-calf', id); render(); },
   seedHouse: async () => { await run(sb.rpc('seed_house')); await refresh(); },
   // "Done!" straight away: take it (if not already) and tick it in one go
   houseDone: async (id) => {

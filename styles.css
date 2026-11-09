@@ -428,3 +428,7 @@ details.find-group .count { color: var(--muted); font-weight: 600; }
 .hint.src { margin-top: 16px; }
 .card.ev-moment { display: flex; align-items: flex-end; gap: 8px; padding: 12px; margin: 4px 0; }
 .card.ev-moment label { flex: 1; }
+
+/* calendar: which phone calendar an event comes from */
+.caldot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 4px 1px 2px; vertical-align: middle; }
+.cal-chips .hchip { display: inline-flex; align-items: center; }
