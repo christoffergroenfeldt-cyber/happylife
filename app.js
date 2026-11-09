@@ -1020,7 +1020,7 @@ function momentCard(tr, st, compact = false) {
       <div class="acts">
         <button class="primary" data-act="logMoment" data-id="${tr.id}">${t('logIt')}</button>
         <button data-act="logOther" data-id="${tr.id}">${t('logOther')}</button>
-        ${editable && !compact ? `<button data-act="planMoment" data-id="${tr.id}">📅 ${t(tr.planned_on ? 'changePlan' : 'plan')}</button>` : ''}
+        ${editable ? `<button data-act="planMoment" data-id="${tr.id}">📅 ${t(tr.planned_on ? 'changePlan' : 'plan')}</button>` : ''}
       </div>
       ${!compact && hist.length ? `<details><summary>${t('history')}</summary><ul class="hist">${hist.map((e) => `
         <li>${fmtDate(e.done_on, getLang())} ${t('by')} ${esc(memberName(e.done_by))}${e.note ? ` – ${esc(e.note)}` : ''}
