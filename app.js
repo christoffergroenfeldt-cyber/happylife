@@ -11,12 +11,21 @@ const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
 
+// Invite links (…/?invite=CODE) – kept until the family is joined, so it survives the e-mail login step.
+function pendingInvite() {
+  try {
+    const code = new URLSearchParams(location.search).get('invite');
+    if (code) { localStorage.setItem('hl-invite', code.toUpperCase()); history.replaceState(null, '', location.pathname); }
+    return localStorage.getItem('hl-invite') || '';
+  } catch { return ''; }
+}
+
 const S = {
   session: null, me: null, family: null, members: [],
   plans: [], tasks: [], done: [], takes: [], trackers: [], entries: [], events: [], points: [],
   sync: null, calendars: [], loginCode: null, suggestions: [], ideaTab: 'event',
   places: [], chores: [], houseMode: 'todo',
-  tab: 'home', authStep: 'email', authEmail: '', setupMode: 'create', ideaShift: {}, pushOn: false,
+  tab: 'home', authStep: 'email', authEmail: '', setupMode: pendingInvite() ? 'join' : 'create', ideaShift: {}, pushOn: false,
 };
 
 const app = document.getElementById('app');
@@ -371,7 +380,7 @@ function renderSetup() {
       </div>
       <form class="card" id="setupForm">
         ${create ? `<label>${t('familyName')}<input name="family" required></label>`
-                 : `<label>${t('inviteCode')}<input name="code" required autocapitalize="characters"></label>`}
+                 : `<label>${t('inviteCode')}<input name="code" required autocapitalize="characters" value="${esc(pendingInvite())}"></label>`}
         <label>${t('yourName')}<input name="name" required></label>
         <fieldset><legend>${t('yourRoles')}</legend>${roleCheckboxes('roles', ROLES, [])}
           <p class="hint">${esc(t('rolesHelp'))}</p></fieldset>
@@ -389,6 +398,7 @@ function renderSetup() {
       await run(sb.rpc('create_family', { p_name: f.get('family'), p_display_name: f.get('name'), p_roles: roles, p_lang: getLang() }));
     } else {
       await run(sb.rpc('join_family', { p_code: f.get('code'), p_display_name: f.get('name'), p_roles: roles }));
+      try { localStorage.removeItem('hl-invite'); } catch {}
     }
     await refresh();
   };
@@ -1200,7 +1210,10 @@ function viewFamily() {
       <p class="meta">${esc(t('inviteHelp', { family: S.family.name }))}</p>
       <div class="code invite-code">${esc(S.family.invite_code)}</div>
       <p class="hint">${esc(t('inviteNotLogin'))}</p>
-      ${admin ? `<button class="small" data-act="newCode">${t('newInviteCode')}</button>` : ''}
+      <div class="invite-actions">
+        <button class="primary small" data-act="shareInvite">📤 ${t('shareInvite')}</button>
+        ${admin ? `<button class="small" data-act="newCode">${t('newInviteCode')}</button>` : ''}
+      </div>
     </div>
     <h2>${esc(t('members'))}</h2>
     <div class="list">${S.members.map((m) => `
@@ -1446,6 +1459,18 @@ const ACTIONS = {
   delEvent: async (id) => { if (!confirm(t('confirmDelete'))) return;
     await run(sb.from('events').delete().eq('id', id)); closeDialog(); await refresh(); },
 
+  shareInvite: async () => {
+    const code = S.family.invite_code;
+    const url = `${location.origin}${location.pathname}?invite=${encodeURIComponent(code)}`;
+    const text = t('shareInviteText', { family: S.family.name, code });
+    if (navigator.share) {
+      try { await navigator.share({ title: t('shareInviteTitle', { family: S.family.name }), text, url }); }
+      catch (err) { if (err?.name !== 'AbortError') toast(t('shareFailed'), true); }
+      return;
+    }
+    try { await navigator.clipboard.writeText(`${text}\n${url}`); toast(t('inviteCopied')); }
+    catch { toast(t('shareFailed'), true); }
+  },
   newCode: async () => {
     if (!confirm(t('newInviteConfirm'))) return;
     await run(sb.rpc('new_invite_code')); await refresh();
