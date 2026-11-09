@@ -396,3 +396,8 @@ h3.day:first-letter { text-transform: uppercase; }
 }
 
 .card.place h3.sub { margin: 14px 0 0; font-size: .95rem; color: var(--muted); }
+
+/* section picker (Opsætning, Øjeblikke): sticks under the header while scrolling */
+.seg.zone-seg { position: sticky; top: env(safe-area-inset-top); z-index: 4; margin: 8px 0 4px;
+  padding: 6px 0; background: color-mix(in srgb, var(--bg) 92%, transparent); flex-wrap: nowrap; }
+.seg.zone-seg button { flex: 1; padding: 8px 6px; font-size: .9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

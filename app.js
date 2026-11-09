@@ -24,7 +24,7 @@ const S = {
   session: null, me: null, family: null, members: [],
   plans: [], tasks: [], done: [], takes: [], trackers: [], entries: [], events: [], points: [],
   sync: null, calendars: [], inbox: [], calView: 'list', findQ: '', loginCode: null, suggestions: [], ideaTab: 'event',
-  places: [], chores: [], houseMode: 'todo',
+  places: [], chores: [], houseMode: 'todo', setupZone: 'daily', momentTab: 'family',
   tab: 'home', authStep: 'email', authEmail: '', setupMode: pendingInvite() ? 'join' : 'create', ideaShift: {}, pushOn: false,
 };
 
@@ -873,7 +873,11 @@ function houseSetup() {
         </div>`).join('')}
       <button class="add-place" data-act="addPlace" data-id="${zone}">＋ ${t('house.addPlace')}</button>`;
   };
-  return `<p class="hint">${esc(t('house.setupHelp'))}</p>${ZONES.map(section).join('')}`;
+  // One section at a time, picked at the top, so the list stays short
+  const zone = ZONES.includes(S.setupZone) ? S.setupZone : 'daily';
+  const pick = `<div class="seg zone-seg">${ZONES.map((z) =>
+    `<button data-act="setupZone" data-id="${z}" class="${z === zone ? 'on' : ''}">${ZONE_ICON[z]} ${esc(zoneLabel(z))}</button>`).join('')}</div>`;
+  return `${pick}<p class="hint">${esc(t('house.setupHelp'))}</p>${section(zone)}`;
 }
 
 function houseLog() {
@@ -1062,11 +1066,17 @@ function viewMoments() {
     .sort((a, b) => order(a) - order(b));
   const fam = items.filter((x) => isFamilyMoment(x.tr)).map(({ tr, st }) => momentCard(tr, st)).join('');
   const own = items.filter((x) => !isFamilyMoment(x.tr)).map(({ tr, st }) => momentCard(tr, st)).join('');
-  return `<div class="toolbar">
-      ${isParent() ? `<button class="primary" data-act="newFamilyMoment">＋ ${t('newFamilyMoment')}</button>` : ''}
-      <button class="${isParent() ? '' : 'primary'}" data-act="newMoment">＋ ${t('newMoment')}</button></div>
-    ${fam ? `<h2>👨‍👩‍👧‍👦 ${esc(t('momentsFamily'))}</h2>${fam}` : ''}
-    ${own ? `<h2>💛 ${esc(t('momentsOwn'))}</h2>${own}` : ''}
+  // Pick "Hele familien" or "Os to" at the top when there are both
+  const both = fam && own;
+  const tab = !both ? (fam ? 'family' : 'own') : S.momentTab === 'own' ? 'own' : 'family';
+  const pick = both ? `<div class="seg zone-seg">
+      <button data-act="momentTab" data-id="family" class="${tab === 'family' ? 'on' : ''}">👨‍👩‍👧‍👦 ${esc(t('momentsFamily'))}</button>
+      <button data-act="momentTab" data-id="own" class="${tab === 'own' ? 'on' : ''}">💛 ${esc(t('momentsOwn'))}</button></div>` : '';
+  const newBtn = tab === 'family' && isParent()
+    ? `<button class="primary" data-act="newFamilyMoment">＋ ${t('newFamilyMoment')}</button>`
+    : `<button class="primary" data-act="newMoment">＋ ${t('newMoment')}</button>`;
+  return `${pick}<div class="toolbar">${newBtn}</div>
+    ${tab === 'family' ? fam : own}
     ${!fam && !own ? `<p class="empty">${esc(t('noMoments'))}</p>` : ''}
     ${ideasSection()}`;
 }
@@ -1688,6 +1698,8 @@ const ACTIONS = {
 
   // house
   houseMode: (id) => { S.houseMode = id; render(); window.scrollTo(0, 0); },
+  setupZone: (id) => { S.setupZone = id; render(); window.scrollTo(0, 0); },
+  momentTab: (id) => { S.momentTab = id; render(); window.scrollTo(0, 0); },
   seedHouse: async () => { await run(sb.rpc('seed_house')); await refresh(); },
   // "Done!" straight away: take it (if not already) and tick it in one go
   houseDone: async (id) => {
