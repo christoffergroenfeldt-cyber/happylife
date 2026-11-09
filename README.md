@@ -14,7 +14,7 @@ Danish, English and French – switch on the login screen or under **Family → 
 | **Plans** | Mother/father create plans (e.g. "Morning routine") with tasks assigned to specific children – daily, weekly, monthly, yearly, once, or every X days. Each child ticks off their own; parents see ✓/○ per child. |
 | **Family tasks** | Open to everyone (or chosen roles), with "people needed". Anyone takes it for the current period; it's full when enough have taken it, and done when a taker ticks it. Like HØBK activities. |
 | **Points** | A parent can give a task points (0–1000). Whoever ticks it off earns them; undo takes them back. Each child sees their own ⭐ counter on Home and Tasks, parents see every child's, with this week's points too. Points are kept even if the task is later deleted. |
-| **House** 🧹 | Rooms/areas (indoor and outdoor) × chore types (Støvsug, Vask gulv, Slå græs …). Parents choose per room how often each chore is due (and optional points); children see the free chores grouped by room and tap **Done!**, or **I'll do it** to claim one first. Every chore shows when it was last done and by whom. Parents also get a 30-day log of who did what. Rooms and chore types are added, renamed, moved or deleted under **House → Setup**. |
+| **House** 🧹 | Three sections: **Dagligt** (everyday chores without a room – dishwasher, cat, table, dinner – on every day from the start), plus rooms/areas indoor and outdoor × chore types (Støvsug, Vask gulv, Slå græs …). Parents choose per room how often each chore is due (and optional points); children see the free chores grouped by room and tap **Done!**, or **I'll do it** to claim one first. Every chore shows when it was last done and by whom. Parents also get a 30-day log of who did what. Rooms and chore types are added, renamed, moved or deleted under **House → Setup**. |
 | **Role tasks** | E.g. a husband-only task – invisible to the wife and children. |
 | **Moments** | "When did I last …" – each with its own reminder interval in days. When the days have passed it appears on Home under *Time for something special* with an idea. Defaults on a new family: flowers + surprise (husband), surprise (wife), out together + trip together (both). |
 | **Family moments** | Moments for the whole family: vacation, takeaway, restaurant, movie, weekend trip, theme park (plus your own). Each shows when you last did it, nudges when it's time again, and can be **planned** with a date and a note (e.g. *Legoland*) – planned ones show on Home in the last 14 days before. Everyone can log one; only parents add, change or plan them. Logging on the planned date clears the plan. |
@@ -35,6 +35,7 @@ A new family starts with this list (an existing family without rooms can load it
 - **Indoor chores:** Støvsug, Vask gulv, Tør støv af, Vand planter, Ryd op
 - **Outdoor areas:** Terasse Øst, Terasse Syd, Terasse Vest, Græsplane, Terasse Hjørne, Foran hus
 - **Outdoor chores:** Slå græs, Fej blade, Fjern ukrudt, Rens, Giv olie
+- **Daily (on every day):** Tøm opvaskemaskine, Giv kat mad, Giv kat vand, Tøm kattebakke, Dæk bord, Lav aftensmad
 
 ## Setup (once, ~10 minutes)
 

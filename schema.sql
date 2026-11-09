@@ -1336,3 +1336,53 @@ select seed_family_moments_for(id) from families;
 
 revoke execute on function seed_family_moments_for(uuid), family_seed_moments(),
   tracker_entry_clears_plan() from anon, authenticated, public;
+
+-- ================================================================ house: daily chores
+-- A third section next to indoor/outdoor: everyday chores that belong to no
+-- room (dishwasher, cat, table, dinner …). They hang off one hidden "daily"
+-- place and are switched on every day from the start.
+
+alter table house_places add column if not exists daily boolean not null default false;
+alter table house_chores add column if not exists daily boolean not null default false;
+
+create or replace function seed_daily_for(p_family uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare pl uuid;
+begin
+  if exists (select 1 from house_chores where family_id = p_family and daily) then
+    return;
+  end if;
+  select id into pl from house_places where family_id = p_family and daily limit 1;
+  if pl is null then
+    insert into house_places(family_id, name, daily, outdoor, sort)
+      values (p_family, 'Dagligt', true, false, 0) returning id into pl;
+  end if;
+  insert into house_chores(family_id, name, daily, outdoor, sort)
+    select p_family, n, true, false, i::int from unnest(array[
+      'Tøm opvaskemaskine', 'Giv kat mad', 'Giv kat vand', 'Tøm kattebakke', 'Dæk bord', 'Lav aftensmad'])
+      with ordinality as x(n, i);
+  insert into tasks(family_id, title, recurrence, need, open, roles, assignees, place_id, chore_id, created_by)
+    select p_family, c.name, 'daily', 1, true, '{child,mother,father}', '{}', pl, c.id, null
+      from house_chores c where c.family_id = p_family and c.daily;
+end $$;
+
+create or replace function family_seed_house() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform seed_house_for(new.id);
+  perform seed_daily_for(new.id);
+  return new;
+end $$;
+
+create or replace function seed_house()
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not i_am_parent() then raise exception 'parents only'; end if;
+  perform seed_house_for(my_family());
+  perform seed_daily_for(my_family());
+end $$;
+
+-- Existing families get the daily list once
+select seed_daily_for(id) from families;
+
+revoke execute on function seed_daily_for(uuid) from anon, authenticated, public;

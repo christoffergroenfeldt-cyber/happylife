@@ -34,7 +34,8 @@ const STRINGS = {
     houseHome: plural('{n} husopgave er ledig', '{n} husopgaver er ledige'),
     house: {
       todo: 'Opgaver', setup: 'Opsætning', log: 'Udført',
-      indoor: 'Inde', outdoor: 'Ude',
+      indoor: 'Inde', outdoor: 'Ude', daily: 'Dagligt',
+      dailyHint: 'Vælg Dagligt for opgaver uden rum, fx giv kat mad – de er slået til hver dag.',
       mineNow: 'Dem jeg har taget', doneNow: 'Klaret i denne periode',
       nothing: 'Ingen ledige husopgaver lige nu 🎉',
       noneSetUp: 'Ingen husopgaver sat op endnu – gå til Opsætning.',
@@ -210,7 +211,8 @@ const STRINGS = {
     houseHome: plural('{n} house chore is free', '{n} house chores are free'),
     house: {
       todo: 'Chores', setup: 'Setup', log: 'Done',
-      indoor: 'Indoors', outdoor: 'Outdoors',
+      indoor: 'Indoors', outdoor: 'Outdoors', daily: 'Daily',
+      dailyHint: 'Pick Daily for chores without a room, e.g. feed the cat – they are on every day.',
       mineNow: 'Ones I took', doneNow: 'Done this period',
       nothing: 'No free house chores right now 🎉',
       noneSetUp: 'No house chores set up yet – go to Setup.',
@@ -386,7 +388,8 @@ const STRINGS = {
     houseHome: plural('{n} tâche ménagère est libre', '{n} tâches ménagères sont libres'),
     house: {
       todo: 'Tâches', setup: 'Réglages', log: 'Faites',
-      indoor: 'Intérieur', outdoor: 'Extérieur',
+      indoor: 'Intérieur', outdoor: 'Extérieur', daily: 'Chaque jour',
+      dailyHint: 'Choisissez Chaque jour pour les tâches sans pièce, par ex. nourrir le chat – elles sont actives tous les jours.',
       mineNow: 'Celles que j’ai prises', doneNow: 'Faites cette période',
       nothing: 'Aucune tâche ménagère libre pour l’instant 🎉',
       noneSetUp: 'Aucune tâche ménagère configurée – allez dans Réglages.',

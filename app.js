@@ -140,7 +140,7 @@ const isHouse = (task) => !!task.place_id;
 function taskTitle(task) {
   if (!isHouse(task)) return task.title;
   const c = byId(S.chores, task.chore_id), p = byId(S.places, task.place_id);
-  return c && p ? `${c.name} – ${p.name}` : task.title;
+  return c && p ? (p.daily ? c.name : `${c.name} – ${p.name}`) : task.title;
 }
 
 // Everything the UI needs to know about a task right now
@@ -797,7 +797,8 @@ function houseRow(task, st, withPlace = false) {
   const takers = !st.done && st.takers.length
     ? `<div class="takers">${esc(t('takenBy'))}: ${st.takers.map((u) => `<span class="chip">${esc(memberName(u))}</span>`).join('')}
        ${task.need > 1 ? `<span class="need">${st.takers.length}/${task.need}</span>` : ''}</div>` : '';
-  const where = withPlace ? `<span class="where">${esc(byId(S.places, task.place_id)?.name)}</span> ` : '';
+  const pl = byId(S.places, task.place_id);
+  const where = withPlace && pl && !pl.daily ? `<span class="where">${esc(pl.name)}</span> ` : '';
   return `
     <div class="row hrow ${st.done ? 'is-done' : ''}">
       <div class="body">
@@ -810,6 +811,12 @@ function houseRow(task, st, withPlace = false) {
     </div>`;
 }
 
+// House zones: daily chores (no room), indoor rooms, outdoor areas
+const ZONES = ['daily', 'in', 'out'];
+const ZONE_ICON = { daily: '☀️', in: '🏠', out: '🌳' };
+const zoneOf = (x) => (x.daily ? 'daily' : x.outdoor ? 'out' : 'in');
+const zoneLabel = (z) => t('house.' + { daily: 'daily', in: 'indoor', out: 'outdoor' }[z]);
+
 function houseTodo() {
   const items = S.tasks.filter(isHouse).map((task) => ({ task, st: taskState(task) })).filter((x) => x.st.active);
   if (!items.length) return `<p class="empty">${esc(t(isParent() ? 'house.noneSetUp' : 'house.nothing'))}</p>`;
@@ -818,51 +825,55 @@ function houseTodo() {
   const open = items.filter((x) => !x.st.took && !x.st.done);
   const doneNow = items.filter((x) => x.st.done);
 
-  const placeCards = (outdoor) => S.places.filter((p) => p.outdoor === outdoor).map((p) => {
+  // Daily chores have no room, so they are one card without a room heading
+  const placeCards = (zone) => S.places.filter((p) => zoneOf(p) === zone).map((p) => {
     const rows = open.filter((x) => x.task.place_id === p.id).sort(byChore);
     if (!rows.length) return '';
-    return `<div class="card place"><h3>${esc(p.name)}</h3>
+    return `<div class="card place">${zone === 'daily' ? '' : `<h3>${esc(p.name)}</h3>`}
       <div class="list">${rows.map(({ task, st }) => houseRow(task, st)).join('')}</div></div>`;
   }).join('');
-  const inside = placeCards(false), outside = placeCards(true);
+  const sections = ZONES.map((z) => [z, placeCards(z)]).filter(([, html]) => html);
   const withPlace = (list) => list.map(({ task, st }) => houseRow(task, st, true)).join('');
 
   return `
     ${mineNow.length ? `<h2>${esc(t('house.mineNow'))}</h2><div class="list">${withPlace(mineNow)}</div>` : ''}
-    ${!inside && !outside ? `<p class="allgood">${esc(t('house.nothing'))}</p>` : ''}
-    ${inside ? `<h2>🏠 ${esc(t('house.indoor'))}</h2>${inside}` : ''}
-    ${outside ? `<h2>🌳 ${esc(t('house.outdoor'))}</h2>${outside}` : ''}
+    ${!sections.length ? `<p class="allgood">${esc(t('house.nothing'))}</p>` : ''}
+    ${sections.map(([z, html]) => `<h2>${ZONE_ICON[z]} ${esc(zoneLabel(z))}</h2>${html}`).join('')}
     ${doneNow.length ? `<details><summary>${esc(t('house.doneNow'))} (${doneNow.length})</summary>
       <div class="list">${withPlace(doneNow)}</div></details>` : ''}`;
 }
 
 function houseSetup() {
-  const section = (outdoor) => {
-    const places = S.places.filter((p) => p.outdoor === outdoor);
-    const chores = S.chores.filter((c) => c.outdoor === outdoor);
-    const io = outdoor ? 'out' : 'in';
-    return `
-      <h2>${outdoor ? '🌳' : '🏠'} ${esc(t('house.' + (outdoor ? 'outdoor' : 'indoor')))}</h2>
-      <div class="card">
-        <h3>${esc(t('house.choreTypes'))}</h3>
-        <div class="hchips">${chores.map((c) =>
-          `<button class="hchip type" data-act="editChoreType" data-id="${c.id}">${esc(c.name)} ✎</button>`).join('')}
-          <button class="hchip add" data-act="addChoreType" data-id="${io}">＋ ${t('house.addChore')}</button></div>
-      </div>
+  const chip = (p, c) => {
+    const tk = houseTask(p.id, c.id);
+    return `<button class="hchip ${tk ? 'on' : ''}" data-act="setChore" data-id="${p.id}|${c.id}">
+      ${esc(c.name)}${tk ? ` · ${esc(recLabel(tk))}${tk.need > 1 ? ` · ${tk.need}👤` : ''}${tk.points ? ` · ⭐${tk.points}` : ''}
+      <small class="last">${esc(lastAgo(lastDone(tk)))}</small>` : ''}</button>`;
+  };
+  const section = (zone) => {
+    const places = S.places.filter((p) => zoneOf(p) === zone);
+    const chores = S.chores.filter((c) => zoneOf(c) === zone);
+    const head = `<h2>${ZONE_ICON[zone]} ${esc(zoneLabel(zone))}</h2>`;
+    const types = `<div class="hchips">${chores.map((c) =>
+      `<button class="hchip type" data-act="editChoreType" data-id="${c.id}">${esc(c.name)} ✎</button>`).join('')}
+      <button class="hchip add" data-act="addChoreType" data-id="${zone}">＋ ${t('house.addChore')}</button></div>`;
+    if (zone === 'daily') {
+      // One card: the chores themselves (tap to set how often), then the list to rename/add
+      return `${head}<div class="card place">
+        ${places.length && chores.length ? `<div class="hchips">${places.flatMap((p) => chores.map((c) => chip(p, c))).join('')}</div>` : ''}
+        <h3 class="sub">${esc(t('house.choreTypes'))}</h3>${types}</div>`;
+    }
+    return `${head}
+      <div class="card"><h3>${esc(t('house.choreTypes'))}</h3>${types}</div>
       ${places.map((p) => `
         <div class="card place">
           <div class="plan-head"><h3>${esc(p.name)}</h3>
             <button class="icon" data-act="editPlace" data-id="${p.id}" aria-label="${t('edit')}">✎</button></div>
-          <div class="hchips">${chores.map((c) => {
-            const tk = houseTask(p.id, c.id);
-            return `<button class="hchip ${tk ? 'on' : ''}" data-act="setChore" data-id="${p.id}|${c.id}">
-              ${esc(c.name)}${tk ? ` · ${esc(recLabel(tk))}${tk.need > 1 ? ` · ${tk.need}👤` : ''}${tk.points ? ` · ⭐${tk.points}` : ''}
-              <small class="last">${esc(lastAgo(lastDone(tk)))}</small>` : ''}</button>`;
-          }).join('') || `<span class="hint">${esc(t('house.noTypes'))}</span>`}</div>
+          <div class="hchips">${chores.map((c) => chip(p, c)).join('') || `<span class="hint">${esc(t('house.noTypes'))}</span>`}</div>
         </div>`).join('')}
-      <button class="add-place" data-act="addPlace" data-id="${io}">＋ ${t('house.addPlace')}</button>`;
+      <button class="add-place" data-act="addPlace" data-id="${zone}">＋ ${t('house.addPlace')}</button>`;
   };
-  return `<p class="hint">${esc(t('house.setupHelp'))}</p>${section(false)}${section(true)}`;
+  return `<p class="hint">${esc(t('house.setupHelp'))}</p>${ZONES.map(section).join('')}`;
 }
 
 function houseLog() {
@@ -894,7 +905,7 @@ function choreSetForm(placeId, choreId) {
   const on = 'daily weekdays weekly monthly custom yearly';
   openDialog(`
     <form id="choreForm" class="form">
-      <h2>${esc(c.name)} – ${esc(p.name)}</h2>
+      <h2>${esc(p.daily ? c.name : `${c.name} – ${p.name}`)}</h2>
       <label>${t('recurrence')}<select name="recurrence">${recs.map((r) =>
         `<option value="${r}" ${r === cur ? 'selected' : ''}>${esc(r === 'none' ? t('house.off') : t('rec.' + r))}</option>`).join('')}</select></label>
       <label data-rec="custom">${t('intervalN')}<input name="interval_days" type="number" min="1" value="${tk?.interval_days || 14}"></label>
@@ -919,7 +930,7 @@ function choreSetForm(placeId, choreId) {
       if (tk) await run(sb.from('tasks').delete().eq('id', tk.id));
     } else {
       const row = {
-        title: `${c.name} – ${p.name}`, notes: f.get('notes').trim() || null,
+        title: p.daily ? c.name : `${c.name} – ${p.name}`, notes: f.get('notes').trim() || null,
         recurrence: rec, interval_days: rec === 'custom' ? Math.max(1, Number(f.get('interval_days')) || 1) : null,
         need: Math.min(20, Math.max(1, Number(f.get('need')) || 1)),
         points: Math.min(1000, Math.max(0, Math.round(Number(f.get('points')) || 0))),
@@ -935,17 +946,18 @@ function choreSetForm(placeId, choreId) {
 }
 
 // Add/rename/move/delete a room (house_places) or a chore type (house_chores)
-function houseItemForm(table, item, outdoor) {
+function houseItemForm(table, item, zone) {
   const isPlace = table === 'house_places';
-  const out = item ? item.outdoor : outdoor;
+  const cur = item ? zoneOf(item) : zone;
+  const zones = isPlace ? ['in', 'out'] : ZONES; // daily chores need no room
   openDialog(`
     <form id="houseItemForm" class="form">
       <h2>${item ? t('edit') : t(isPlace ? 'house.addPlace' : 'house.addChore')}</h2>
       <label>${t('house.name')}<input name="name" value="${esc(item?.name || '')}" required></label>
-      <label>${t('house.where')}<select name="outdoor">
-        <option value="in" ${out ? '' : 'selected'}>${esc(t('house.indoor'))}</option>
-        <option value="out" ${out ? 'selected' : ''}>${esc(t('house.outdoor'))}</option></select></label>
+      <label>${t('house.where')}<select name="zone">${zones.map((z) =>
+        `<option value="${z}" ${z === cur ? 'selected' : ''}>${esc(zoneLabel(z))}</option>`).join('')}</select></label>
       ${item && isPlace ? `<p class="hint">${esc(t('house.moveHint'))}</p>` : ''}
+      ${!isPlace && cur !== 'daily' ? `<p class="hint">${esc(t('house.dailyHint'))}</p>` : ''}
       <div class="btns">
         ${item ? `<button type="button" class="danger" data-act="delHouseItem" data-id="${table}|${item.id}">${t('delete')}</button>` : ''}
         <span class="grow"></span>
@@ -956,13 +968,26 @@ function houseItemForm(table, item, outdoor) {
   document.getElementById('houseItemForm').onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
-    const row = { name: f.get('name').trim(), outdoor: f.get('outdoor') === 'out' };
+    const z = f.get('zone');
+    const row = { name: f.get('name').trim(), outdoor: z === 'out', daily: z === 'daily' };
     if (!row.name) return;
-    if (item) await run(sb.from(table).update(row).eq('id', item.id));
-    else {
+    let choreId = item?.id;
+    if (item) {
+      await run(sb.from(table).update(row).eq('id', item.id));
+      // a chore moved to another section: its old room settings no longer apply
+      if (!isPlace && zoneOf(item) !== z) await run(sb.from('tasks').delete().eq('chore_id', item.id));
+    } else {
       const list = isPlace ? S.places : S.chores;
       row.sort = list.reduce((m, x) => Math.max(m, x.sort), 0) + 1;
-      await run(sb.from(table).insert(row));
+      const [created] = await run(sb.from(table).insert(row).select());
+      choreId = created.id;
+    }
+    // A daily chore is switched on straight away, every day
+    if (!isPlace && z === 'daily' && (!item || zoneOf(item) !== 'daily')) {
+      let place = S.places.find((p) => p.daily);
+      if (!place) [place] = await run(sb.from('house_places').insert({ name: t('house.daily'), daily: true, outdoor: false, sort: 0 }).select());
+      await run(sb.from('tasks').insert({ title: row.name, recurrence: 'daily', need: 1, points: 0, open: true,
+        roles: HOUSE_ROLES, assignees: [], place_id: place.id, chore_id: choreId, start_date: today() }));
     }
     closeDialog(); await refresh();
   };
@@ -1672,9 +1697,9 @@ const ACTIONS = {
     toast('✓ 💪'); await refresh();
   },
   setChore: (id) => { const [p, c] = id.split('|'); choreSetForm(p, c); },
-  addPlace: (io) => houseItemForm('house_places', null, io === 'out'),
+  addPlace: (zone) => houseItemForm('house_places', null, zone),
   editPlace: (id) => houseItemForm('house_places', byId(S.places, id)),
-  addChoreType: (io) => houseItemForm('house_chores', null, io === 'out'),
+  addChoreType: (zone) => houseItemForm('house_chores', null, zone),
   editChoreType: (id) => houseItemForm('house_chores', byId(S.chores, id)),
   delHouseItem: async (ref) => {
     const [table, id] = ref.split('|');
