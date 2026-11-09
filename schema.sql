@@ -1391,3 +1391,59 @@ revoke execute on function seed_daily_for(uuid) from anon, authenticated, public
 -- Rooms and chore types are unique per family (ignoring case and spaces at the ends)
 create unique index if not exists house_places_unique_name on house_places(family_id, lower(btrim(name)));
 create unique index if not exists house_chores_unique_name on house_chores(family_id, lower(btrim(name)));
+
+-- ================================================================ find: home and nearby places
+-- The family's home (set by a parent under Familie) and the places near it that
+-- the "Find" page for moments lists: takeaway, restaurants, cinemas, theatres
+-- and florists from OpenStreetMap, within nearby_minutes' drive. The phone
+-- fetches them (places.js) and a parent's phone saves them here.
+
+alter table families add column if not exists home_address text;
+alter table families add column if not exists home_lat double precision;
+alter table families add column if not exists home_lon double precision;
+alter table families add column if not exists nearby_minutes int not null default 20;
+alter table families drop constraint if exists families_nearby_minutes_check;
+alter table families add constraint families_nearby_minutes_check check (nearby_minutes between 5 and 60);
+
+create or replace function set_home(p_address text, p_lat double precision, p_lon double precision, p_minutes int default null)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not i_am_parent() then raise exception 'parents only'; end if;
+  if p_lat is not null and (p_lat not between -90 and 90 or p_lon not between -180 and 180) then
+    raise exception 'bad position';
+  end if;
+  update families set home_address = nullif(btrim(left(p_address, 300)), ''), home_lat = p_lat, home_lon = p_lon,
+                      nearby_minutes = coalesce(p_minutes, nearby_minutes)
+   where id = my_family();
+end $$;
+
+create table if not exists nearby_places (
+  id         uuid primary key default gen_random_uuid(),
+  family_id  uuid not null default my_family() references families on delete cascade,
+  osm_id     text not null,
+  cats       text[] not null check (cats <@ array['takeaway','restaurant','cinema','theatre','florist'] and cardinality(cats) > 0),
+  name       text not null check (length(name) between 1 and 120),
+  cuisine    text check (length(cuisine) <= 120),
+  grp        text check (length(grp) <= 30),
+  address    text check (length(address) <= 300),
+  lat        double precision not null,
+  lon        double precision not null,
+  minutes    int not null check (minutes between 0 and 600),
+  estimated  boolean not null default false,
+  website    text check (length(website) <= 300),
+  phone      text check (length(phone) <= 40),
+  created_at timestamptz not null default now(),
+  unique (family_id, osm_id)
+);
+create index if not exists nearby_places_family on nearby_places(family_id, minutes);
+alter table nearby_places enable row level security;
+drop policy if exists np_select on nearby_places;
+create policy np_select on nearby_places for select using (family_id = my_family());
+drop policy if exists np_insert on nearby_places;
+create policy np_insert on nearby_places for insert with check (family_id = my_family() and i_am_parent());
+drop policy if exists np_delete on nearby_places;
+create policy np_delete on nearby_places for delete using (family_id = my_family() and i_am_parent());
+grant select, insert, delete on nearby_places to authenticated;
+
+revoke execute on function set_home(text, double precision, double precision, int) from anon, public;
+grant execute on function set_home(text, double precision, double precision, int) to authenticated;

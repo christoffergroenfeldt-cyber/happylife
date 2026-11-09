@@ -2,6 +2,8 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, VAPID_PUBLIC_KEY } from './config.js';
 import { t, setLang, getLang, LANGS, IDEAS, EVENT_TASKS } from './i18n.js';
+import { CUISINES, CATALOG, NEARBY } from './catalog.js';
+import { geocode, fetchNearby } from './places.js';
 import { AGES, ROUTINES, ROUTINE_REC, ROUTINE_TIME, TEMPLATES } from './templates.js';
 import { todayISO, daysBetween, addDays, trackerStatus, eventStatus, periodKey, periodEnd, eventOccurrence, fmtDate, nextWeekly } from './dates.js';
 
@@ -10,7 +12,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '21'; // keep in step with CACHE in sw.js
+const APP_VERSION = '22'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -44,6 +46,7 @@ const S = {
   plans: [], tasks: [], done: [], takes: [], trackers: [], entries: [], events: [], points: [],
   sync: null, calendars: [], inbox: [], calView: 'list', findQ: '', loginCode: null, suggestions: [], ideaTab: 'event',
   places: [], chores: [], houseMode: 'todo', setupZone: 'daily', momentTab: 'family',
+  find: null, nearby: null, nearbyMeta: null, findItems: [],
   tab: 'home', authStep: 'email', authEmail: '', setupMode: pendingInvite() ? 'join' : 'create', ideaShift: {}, pushOn: false,
 };
 
@@ -119,6 +122,11 @@ async function loadAll() {
     run(sb.from('house_chores').select('*').order('sort').order('created_at')),
   ]);
   Object.assign(S, { family, members, plans, tasks, done, takes, trackers, entries, events, points: points || [], places, chores });
+  // How many places near home are saved (the list itself is loaded when Find opens)
+  try {
+    const r = await sb.from('nearby_places').select('created_at', { count: 'exact' }).order('created_at', { ascending: false }).limit(1);
+    S.nearbyMeta = r.error ? null : { n: r.count || 0, at: r.data?.[0]?.created_at || null };
+  } catch { S.nearbyMeta = null; }
   // Idea lists (only rows for my roles come back; a missing table just means none)
   const { data: sugg } = await sb.from('suggestions').select('*');
   S.suggestions = sugg || [];
@@ -1043,7 +1051,8 @@ function houseItemForm(table, item, zone) {
 const entriesOf = (id) => S.entries.filter((e) => e.tracker_id === id);
 const FAMILY_KINDS = ['vacation', 'takeaway', 'restaurant', 'movie', 'weekend', 'themepark'];
 const COUPLE_KINDS = ['flowers', 'surprise', 'date', 'trip'];
-const KIND_ICON = { vacation: '🏖️', takeaway: '🥡', restaurant: '🍽️', movie: '🎬', weekend: '🧳', themepark: '🎢', custom: '⭐' };
+const KIND_ICON = { vacation: '🏖️', takeaway: '🥡', restaurant: '🍽️', movie: '🎬', weekend: '🧳', themepark: '🎢', custom: '⭐',
+  flowers: '💐', surprise: '🎁', date: '🥂', trip: '✈️' };
 const isFamilyMoment = (tr) => tr.roles.includes('all');
 const canEditMoment = (tr) => !isFamilyMoment(tr) || isParent();
 // The planned next time, while it is today or later
@@ -1091,6 +1100,7 @@ function momentCard(tr, st, compact = false) {
         <button class="primary" data-act="logMoment" data-id="${tr.id}">${t('logIt')}</button>
         <button data-act="logOther" data-id="${tr.id}">${t('logOther')}</button>
         ${editable ? `<button data-act="planMoment" data-id="${tr.id}">📅 ${t(tr.planned_on ? 'changePlan' : 'plan')}</button>` : ''}
+        <button data-act="openFind" data-id="${tr.id}">🔎 ${t('find')}</button>
       </div>
       ${!compact && hist.length ? `<details><summary>${t('history')}</summary><ul class="hist">${hist.map((e) => `
         <li>${fmtDate(e.done_on, getLang())} ${t('by')} ${esc(memberName(e.done_by))}${e.note ? ` – ${esc(e.note)}` : ''}
@@ -1100,6 +1110,7 @@ function momentCard(tr, st, compact = false) {
 }
 
 function viewMoments() {
+  if (S.find) return viewMomentFind();
   const td = today();
   const order = (x) => (plannedAhead(x.tr) ? 100000 + daysBetween(td, x.tr.planned_on) : x.st.dueIn);
   const items = S.trackers
@@ -1116,7 +1127,7 @@ function viewMoments() {
   const newBtn = tab === 'family' && isParent()
     ? `<button class="primary" data-act="newFamilyMoment">＋ ${t('newFamilyMoment')}</button>`
     : `<button class="primary" data-act="newMoment">＋ ${t('newMoment')}</button>`;
-  return `${pick}<div class="toolbar">${newBtn}</div>
+  return `${pick}<div class="toolbar">${newBtn}<button data-act="openFind" data-id="">🔎 ${t('findIdeas')}</button></div>
     ${tab === 'family' ? fam : own}
     ${!fam && !own ? `<p class="empty">${esc(t('noMoments'))}</p>` : ''}
     ${ideasSection()}`;
@@ -1214,14 +1225,14 @@ function momentForm(tr, family = false) {
 }
 
 // Plan the next time: a date and a note (e.g. "Legoland" or "Mallorca")
-function momentPlanForm(tr) {
+function momentPlanForm(tr, pre = {}) {
   const h = t('planNoteHint.' + tr.kind);
   const hint = h.startsWith('planNoteHint') ? '' : h;
   openDialog(`
     <form id="momentPlanForm" class="form">
       <h2>📅 ${esc(tr.title)}</h2>
-      <label>${t('date')}<input name="planned_on" type="date" min="${today()}" value="${tr.planned_on || ''}" required></label>
-      <label>${t('planNote')}<input name="plan_note" value="${esc(tr.plan_note || '')}" placeholder="${esc(hint)}"></label>
+      <label>${t('date')}<input name="planned_on" type="date" min="${today()}" value="${pre.date || tr.planned_on || ''}" required></label>
+      <label>${t('planNote')}<input name="plan_note" value="${esc(pre.note ?? tr.plan_note ?? '')}" placeholder="${esc(hint)}"></label>
       <div class="btns">
         ${tr.planned_on ? `<button type="button" class="danger" data-act="clearPlan" data-id="${tr.id}">${t('removePlan')}</button>` : ''}
         <span class="grow"></span>
@@ -1235,6 +1246,131 @@ function momentPlanForm(tr) {
     await run(sb.from('trackers').update({ planned_on: f.get('planned_on'), plan_note: f.get('plan_note').trim() || null }).eq('id', tr.id));
     closeDialog(); toast('📅'); await refresh();
   };
+}
+
+// ------------------------------------------------------------ find (moments)
+// A page to search and pick from: places near home (takeaway grouped by food
+// type, restaurants, cinemas, florists), hand-picked lists (theme parks,
+// destinations) and ideas. Picking fills in the plan of the moment.
+
+const FIND_KINDS = () => [...FAMILY_KINDS, ...COUPLE_KINDS, 'custom'];
+
+async function loadNearby() {
+  const out = [];
+  for (let from = 0; ; from += 1000) {   // the API returns at most 1000 rows at a time
+    const part = await run(sb.from('nearby_places').select('*').order('minutes').order('name').range(from, from + 999));
+    out.push(...part);
+    if (part.length < 1000) break;
+  }
+  S.nearby = out;
+}
+
+function findGroups(kind) {
+  const L = getLang();
+  const groups = [];
+  let state = null;
+  const cats = NEARBY[kind] || [];
+  const placeItem = (p) => ({
+    name: p.name, extra: p.cuisine || '',
+    sub: [t(p.estimated ? 'minutesEst' : 'minutesN', { n: p.minutes }), p.address].filter(Boolean).join(' · '),
+    note: p.name, map: `https://maps.apple.com/?q=${encodeURIComponent(p.name)}&ll=${p.lat},${p.lon}`,
+    web: p.website && /^https?:\/\//i.test(p.website) ? p.website : null, phone: p.phone,
+  });
+  if (cats.length) {
+    if (S.family?.home_lat == null) state = 'nohome';
+    else if (S.nearby === null) state = 'loading';
+    else if (!S.nearby.length) state = 'empty';
+    else {
+      for (const cat of cats) {
+        const list = S.nearby.filter((p) => p.cats.includes(cat));
+        if (cat === 'takeaway' || cat === 'restaurant') {
+          // grouped by food type / country, biggest groups first, "Andet" last
+          CUISINES.map((c) => ({ c, items: list.filter((p) => (p.grp || 'other') === c.key) }))
+            .filter((x) => x.items.length)
+            .sort((a, b) => (a.c.key === 'other') - (b.c.key === 'other') || b.items.length - a.items.length)
+            .forEach(({ c, items }) => groups.push({ icon: c.icon, label: c[L] || c.en, items: items.map(placeItem) }));
+        } else if (list.length) {
+          groups.push({ icon: '', label: t('placeCats.' + cat), items: list.map(placeItem) });
+        }
+      }
+      if (!groups.length) state = 'none';
+    }
+  }
+  for (const g of CATALOG[kind] || []) {
+    groups.push({ icon: g.icon, label: g.label[L] || g.label.en,
+      items: g.items.map(([name, sub]) => ({ name, sub, note: sub ? `${name} (${sub})` : name })) });
+  }
+  const ideas = IDEAS[L][kind] || IDEAS[L].custom || [];
+  if (ideas.length) groups.push({ icon: '💡', label: t('ideasGroup'), items: ideas.map((x) => ({ name: x, note: x })) });
+  return { groups, state };
+}
+
+function viewMomentFind() {
+  const f = S.find;
+  const tr = f.trId ? byId(S.trackers, f.trId) : null;
+  const target = tr || S.trackers.find((x) => x.kind === f.kind && canEditMoment(x));
+  const pickable = !!target && canEditMoment(target);
+  const { groups, state } = findGroups(f.kind);
+  S.findItems = [];
+  const stateMsg = {
+    nohome: `<div class="card"><p>${esc(t('nearbyNeedHome'))}</p>
+      ${isParent() ? `<button class="primary small" data-act="tab" data-id="family">${t('goFamily')}</button>` : ''}</div>`,
+    loading: `<p class="empty">⏳ ${esc(t('loading'))}</p>`,
+    empty: `<div class="card"><p>${esc(t('nearbyNone'))}</p>
+      ${isParent() ? `<button class="primary small" data-act="refreshNearby">${t('nearbyFind')}</button>` : `<p class="hint">${esc(t('nearbyOnlyParents'))}</p>`}</div>`,
+    none: `<p class="empty">${esc(t('nearbyNoKind', { min: S.family?.nearby_minutes || 20 }))}</p>`,
+  }[state] || '';
+  const total = groups.reduce((n, g) => n + g.items.length, 0);
+  const item = (it, g) => {
+    const idx = S.findItems.push(it) - 1;
+    const text = `${it.name} ${it.sub || ''} ${it.extra || ''} ${g.label}`.toLowerCase();
+    return `
+      <div class="row find-item" data-text="${esc(text)}">
+        <div class="body"><div class="ttl">${esc(it.name)}</div>${it.sub ? `<div class="meta">${esc(it.sub)}</div>` : ''}</div>
+        <div class="find-acts">
+          ${it.map ? `<a class="ext" href="${esc(it.map)}" target="_blank" rel="noopener" aria-label="${t('mapLink')}">🗺️</a>` : ''}
+          ${it.web ? `<a class="ext" href="${esc(it.web)}" target="_blank" rel="noopener" aria-label="${t('website')}">🌐</a>` : ''}
+          ${it.phone ? `<a class="ext" href="tel:${esc(it.phone.replace(/[^\d+]/g, ''))}" aria-label="☎">☎️</a>` : ''}
+          ${pickable ? `<button class="small primary" data-act="findPick" data-id="${idx}">${t('pick')}</button>` : ''}
+        </div>
+      </div>`;
+  };
+  return `
+    <div class="find-head">
+      <button class="link" data-act="findBack">← ${t('back')}</button>
+      <h2>🔎 ${esc(t('find'))}${target ? ` · ${esc(target.title)}` : ''}</h2>
+    </div>
+    <div class="kind-chips">${FIND_KINDS().map((k) => `<button class="hchip ${k === f.kind ? 'on' : ''}" data-act="findKind" data-id="${k}">${KIND_ICON[k] || ''} ${esc(t('kinds.' + k))}</button>`).join('')}</div>
+    <input id="momentQ" class="find-q" type="search" placeholder="${esc(t('momentSearch'))}" autocomplete="off" enterkeyhint="search">
+    ${!target ? `<p class="hint">${esc(t('noMomentKind', { kind: t('kinds.' + f.kind) }))}</p>` : !pickable ? `<p class="hint">${esc(t('findBrowseOnly'))}</p>` : ''}
+    ${stateMsg}
+    ${groups.map((g) => {
+      const open = g.items.length <= 6 || groups.length === 1 || total <= 12;
+      return `<details class="find-group" data-open="${open ? 1 : 0}" ${open ? 'open' : ''}>
+        <summary>${g.icon} ${esc(g.label)} <span class="count">(${g.items.length})</span></summary>
+        <div class="list">${g.items.map((it) => item(it, g)).join('')}</div></details>`;
+    }).join('')}
+    ${NEARBY[f.kind] && S.nearbyMeta?.n ? `<p class="hint src">${esc(t('nearbySource', { min: S.family?.nearby_minutes || 20 }))}</p>` : ''}`;
+}
+
+// Parents: the home address that "near home" is measured from
+function homeSection() {
+  if (!isParent()) return '';
+  const f = S.family || {};
+  const m = S.nearbyMeta;
+  return `
+    <h2>🏠 ${esc(t('homeTitle'))}</h2>
+    <div class="card">
+      <form id="homeForm" class="form">
+        <label>${t('homeAddress')}<input name="address" value="${esc(f.home_address || '')}" placeholder="${esc(t('homePlaceholder'))}" autocomplete="street-address" required></label>
+        <label>${t('homeMinutes')}<input name="minutes" type="number" min="5" max="60" value="${f.nearby_minutes || 20}"></label>
+        <button class="primary" type="submit">${t('save')}</button>
+      </form>
+      ${f.home_lat != null ? `
+        <p class="meta">${m?.n ? esc(t('nearbyFound', m.n)) + (m.at ? ' · ' + esc(t('nearbyUpdated', { date: fmtDate(m.at.slice(0, 10), getLang()) })) : '') : esc(t('nearbyNone'))}</p>
+        <button class="small" data-act="refreshNearby">${t(m?.n ? 'nearbyRefresh' : 'nearbyFind')}</button>` : ''}
+      <p class="hint">${esc(t('homeHint'))}</p>
+    </div>`;
 }
 
 function logOtherForm(trId) {
@@ -1505,6 +1641,7 @@ function eventForm(ev, preset = null) {
     <form id="eventForm" class="form">
       <h2>${ev ? `${eventIcon(ev.type)} ${esc(ev.title)}` : t('newEvent')}</h2>
       ${eventTasksSection(ev)}
+      ${eventMomentSection(ev)}
       ${followed ? `<p class="hint">🔍 ${esc(t('followedFrom', { cal: calName(followed.calendar_id) }))}</p>`
         : fixed ? `<p class="hint">📱 ${esc(t('fromPhone'))}</p>` : ''}
       <label>${t('kind')}<select name="type">${['vacation', 'anniversary', 'birthday', 'other'].map((k) =>
@@ -1542,6 +1679,21 @@ function eventForm(ev, preset = null) {
   };
 }
 
+// Parents: plan one of the moments on this event's date (e.g. a vacation)
+function eventMomentSection(ev) {
+  if (!ev || !isParent()) return '';
+  const list = S.trackers.filter(canEditMoment);
+  if (!list.length) return '';
+  const guess = { vacation: 'vacation', anniversary: 'date', birthday: 'restaurant' }[ev.type];
+  const sel = list.find((x) => x.kind === guess) || list[0];
+  return `
+    <div class="card ev-moment">
+      <label>💛 ${t('eventToMoment')}<select id="evMoment">${list.map((x) =>
+        `<option value="${x.id}" ${x.id === sel.id ? 'selected' : ''}>${KIND_ICON[x.kind] || '💛'} ${esc(x.title)}</option>`).join('')}</select></label>
+      <button type="button" class="small" data-act="eventMoment" data-id="${ev.id}">📅 ${t('plan')}</button>
+    </div>`;
+}
+
 // ------------------------------------------------------------ family
 
 function viewFamily() {
@@ -1572,6 +1724,7 @@ function viewFamily() {
     <form class="inline" id="nameForm"><input name="name" value="${esc(S.me.display_name)}" required>
       <button type="submit">${t('save')}</button></form>
     ${pushSection()}
+    ${homeSection()}
     ${calendarSection()}
     <h2>${esc(t('language'))}</h2>
     ${langPicker()}
@@ -1766,6 +1919,44 @@ const ACTIONS = {
   newMoment: () => momentForm(null),
   newFamilyMoment: () => momentForm(null, true),
   planMoment: (id) => momentPlanForm(byId(S.trackers, id)),
+  openFind: async (id) => {
+    const tr = id ? byId(S.trackers, id) : null;
+    S.find = { trId: tr?.id || null, kind: tr?.kind || (isParent() ? 'takeaway' : 'movie') };
+    S.tab = 'moments'; render(); window.scrollTo(0, 0);
+    if (S.nearby === null && S.family?.home_lat != null) {
+      try { await loadNearby(); } catch { S.nearby = []; }
+      if (S.find) render();
+    }
+  },
+  findKind: (k) => { S.find.kind = k; render(); },
+  findBack: () => { S.find = null; render(); window.scrollTo(0, 0); },
+  findPick: (idx) => {
+    const it = S.findItems[Number(idx)];
+    const tr = S.find.trId ? byId(S.trackers, S.find.trId) : S.trackers.find((x) => x.kind === S.find.kind && canEditMoment(x));
+    if (!it || !tr) return;
+    momentPlanForm(tr, { note: it.note });
+  },
+  refreshNearby: async () => {
+    const f = S.family;
+    if (f?.home_lat == null) return toast(t('nearbyNeedHome'), true);
+    toast(t('nearbyLoading'));
+    let rows;
+    try { rows = await fetchNearby({ lat: f.home_lat, lon: f.home_lon }, f.nearby_minutes || 20); } catch (e) {
+      console.error(e); return toast(t('nearbyFailed'), true);
+    }
+    await run(sb.from('nearby_places').delete().eq('family_id', f.id));
+    for (let i = 0; i < rows.length; i += 500) await run(sb.from('nearby_places').insert(rows.slice(i, i + 500)));
+    toast(t('nearbyFound', rows.length));
+    await loadNearby(); await refresh();
+  },
+  eventMoment: (evId) => {
+    const ev = byId(S.events, evId);
+    const tr = byId(S.trackers, document.getElementById('evMoment')?.value);
+    if (!ev || !tr) return;
+    const date = ev.yearly ? eventStatus(ev, today()).date : ev.start_date;
+    closeDialog();
+    momentPlanForm(tr, { note: ev.title, date });
+  },
   clearPlan: async (id) => {
     await run(sb.from('trackers').update({ planned_on: null, plan_note: null }).eq('id', id));
     closeDialog(); await refresh();
@@ -1877,7 +2068,37 @@ document.addEventListener('click', async (e) => {
   try { await fn(el.dataset.id); } catch { /* toast already shown */ } finally { el.disabled = false; }
 });
 
+// Moment Find page search: filter the list without re-rendering (keeps the keyboard open)
+document.addEventListener('input', (e) => {
+  if (e.target.id !== 'momentQ') return;
+  const q = e.target.value.trim().toLowerCase();
+  document.querySelectorAll('.find-group').forEach((g) => {
+    let n = 0;
+    g.querySelectorAll('.find-item').forEach((it) => { const ok = !q || it.dataset.text.includes(q); it.hidden = !ok; if (ok) n += 1; });
+    g.hidden = n === 0;
+    g.open = q ? true : g.dataset.open === '1';
+    const c = g.querySelector('.count'); if (c) c.textContent = `(${n})`;
+  });
+});
+
 document.addEventListener('submit', (e) => {
+  if (e.target.id === 'homeForm') {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const address = String(fd.get('address') || '').trim();
+    const minutes = Math.min(60, Math.max(5, Number(fd.get('minutes')) || 20));
+    if (!address) return;
+    (async () => {
+      let pos = null;
+      try { pos = await geocode(address, getLang()); } catch { /* offline or service busy */ }
+      if (!pos) return toast(t('homeNotFound'), true);
+      await run(sb.rpc('set_home', { p_address: address, p_lat: pos.lat, p_lon: pos.lon, p_minutes: minutes }));
+      toast(t('homeSaved'));
+      await refresh();
+      await ACTIONS.refreshNearby();
+    })().catch(() => {});
+    return;
+  }
   if (e.target.id === 'nameForm') {
     e.preventDefault();
     const name = new FormData(e.target).get('name').trim();

@@ -410,3 +410,21 @@ h3.day:first-letter { text-transform: uppercase; }
 /* home: rest of the free tasks, moment group label */
 details.more > summary { margin: 10px 0 8px; font-weight: 700; }
 h3.subhead { font-size: .95rem; color: var(--muted); margin: 0 0 8px; }
+
+/* ---------- moments: Find page ---------- */
+.find-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.find-head h2 { margin: 6px 0; }
+.kind-chips { display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 8px; margin: 0 -16px; padding-left: 16px; padding-right: 16px;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.kind-chips::-webkit-scrollbar { display: none; }
+.kind-chips .hchip { flex: none; white-space: nowrap; }
+.kind-chips .hchip.on { border: 1px solid var(--ok); background: var(--ok-soft); color: var(--ok); }
+input.find-q { margin: 4px 0 10px; }
+details.find-group { margin: 0 0 10px; }
+details.find-group > summary { font-weight: 700; color: var(--ink); font-size: 1rem; padding: 8px 2px; }
+details.find-group .count { color: var(--muted); font-weight: 600; }
+.row.find-item { align-items: center; }
+.find-acts a.ext { text-decoration: none; font-size: 1.15rem; padding: 4px 5px; }
+.hint.src { margin-top: 16px; }
+.card.ev-moment { display: flex; align-items: flex-end; gap: 8px; padding: 12px; margin: 4px 0; }
+.card.ev-moment label { flex: 1; }

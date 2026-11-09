@@ -1,6 +1,6 @@
 // Happy Life service worker: app shell offline, data always live from Supabase.
-const CACHE = 'happylife-v21';
-const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'i18n.js', 'dates.js', 'config.js', 'templates.js',
+const CACHE = 'happylife-v22';
+const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'i18n.js', 'dates.js', 'config.js', 'templates.js', 'catalog.js', 'places.js',
   'manifest.json', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
