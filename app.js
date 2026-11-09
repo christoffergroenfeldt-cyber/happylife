@@ -3,7 +3,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 import { SUPABASE_URL, SUPABASE_ANON_KEY, VAPID_PUBLIC_KEY } from './config.js';
 import { t, setLang, getLang, LANGS, IDEAS, EVENT_TASKS } from './i18n.js';
 import { AGES, ROUTINES, ROUTINE_REC, ROUTINE_TIME, TEMPLATES } from './templates.js';
-import { todayISO, daysBetween, addDays, trackerStatus, eventStatus, periodKey, periodEnd, eventOccurrence, fmtDate } from './dates.js';
+import { todayISO, daysBetween, addDays, trackerStatus, eventStatus, periodKey, periodEnd, eventOccurrence, fmtDate, nextWeekly } from './dates.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
@@ -23,7 +23,7 @@ function pendingInvite() {
 const S = {
   session: null, me: null, family: null, members: [],
   plans: [], tasks: [], done: [], takes: [], trackers: [], entries: [], events: [], points: [],
-  sync: null, calendars: [], loginCode: null, suggestions: [], ideaTab: 'event',
+  sync: null, calendars: [], inbox: [], calView: 'list', findQ: '', loginCode: null, suggestions: [], ideaTab: 'event',
   places: [], chores: [], houseMode: 'todo',
   tab: 'home', authStep: 'email', authEmail: '', setupMode: pendingInvite() ? 'join' : 'create', ideaShift: {}, pushOn: false,
 };
@@ -104,11 +104,16 @@ async function loadAll() {
   const { data: sugg } = await sb.from('suggestions').select('*');
   S.suggestions = sugg || [];
   if (isParent()) {
-    const [sync, calendars] = await Promise.all([
+    const td = today();
+    const [sync, calendars, inbox] = await Promise.all([
       run(sb.from('sync_tokens').select('*').maybeSingle()),
       run(sb.from('user_calendars').select('*').order('name')),
+      // Find events: what is still coming (a missing table just means an older database)
+      sb.from('calendar_inbox').select('*')
+        .or(`start_date.gte.${td},end_date.gte.${td},repeat_until.gte.${td}`)
+        .order('start_date').order('start_time', { nullsFirst: true }).then((r) => r.data || []),
     ]);
-    Object.assign(S, { sync, calendars });
+    Object.assign(S, { sync, calendars, inbox });
   }
 }
 
@@ -1201,6 +1206,7 @@ function weeklyLabel(ev, st) {
 }
 
 function viewCalendar() {
+  if (S.calView === 'find' && isParent()) return viewFind();
   const td = today();
   const all = S.events.map((ev) => ({ ev, st: eventStatus(ev, td) }));
   // weekly series (lessons etc.) get their own folded section, so they don't crowd the list
@@ -1211,13 +1217,190 @@ function viewCalendar() {
   const past = list.filter((x) => !future.includes(x)).sort((a, b) => b.st.date.localeCompare(a.st.date));
   const syncHint = isParent() && !S.sync?.last_sync_at
     ? `<p class="hint">📱 ${esc(t('calSyncHint'))} <button class="link" data-act="tab" data-id="family">${t('tabs.family')} →</button></p>` : '';
-  return `<div class="toolbar"><button class="primary" data-act="newEvent">＋ ${t('newEvent')}</button></div>
+  const nNew = findNewCount();
+  const findBtn = isParent() && (S.inbox.length || S.calendars.some((c) => c.pick))
+    ? `<button data-act="calView" data-id="find">🔍 ${t('findEvents')}${nNew ? ` <span class="badge">${nNew}</span>` : ''}</button>` : '';
+  return `<div class="toolbar"><button class="primary" data-act="newEvent">＋ ${t('newEvent')}</button>${findBtn}</div>
     ${isParent() && S.events.length ? `<p class="hint">${esc(t('tapEventForTasks'))}</p>` : ''}
     ${future.length ? `<div class="list">${future.map(({ ev, st }) => eventRow(ev, st)).join('')}</div>` : `<p class="empty">${esc(t('noEvents'))}</p>`}
     ${weekly.length ? `<details class="weekly"><summary>🔁 ${esc(t('weeklyEvents'))} (${weekly.length})</summary><div class="list">${weekly.map(({ ev, st }) => eventRow(ev, st)).join('')}</div></details>` : ''}
     ${syncHint}
     ${past.length ? `<details><summary>${t('history')}</summary><div class="list">${past.map(({ ev, st }) => eventRow(ev, st)).join('')}</div></details>` : ''}`;
 }
+
+// ------------------------------------------------------------ find events
+// Events from calendars set to "Pick myself" (e.g. Aula, ForældreIntra). Like
+// the HØBK calendar: one Filter button opens a sheet with every option, the
+// active choices show as removable chips, and the filter is kept on the phone.
+
+const FIND_DEFAULT = { off: [], days: 31, show: ['new', 'followed'], series: true };
+const FIND_DAYS = [14, 31, 92, 0];   // 0 = everything
+const CAL_COLORS = ['#2F6FB3', '#E58A2E', '#8B5CF6', '#0E9F6E', '#D9536A', '#B7791F', '#0891B2', '#6B7280'];
+
+const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1);
+
+function findFilter() {
+  try { return { ...FIND_DEFAULT, ...JSON.parse(store('hl-findf') || '{}') }; } catch { return { ...FIND_DEFAULT }; }
+}
+function saveFindFilter(f) { store('hl-findf', JSON.stringify(f)); }
+
+const pickCals = () => S.calendars.filter((c) => c.pick || S.inbox.some((x) => x.calendar_id === c.id));
+const calColor = (id) => { const i = pickCals().findIndex((c) => c.id === id); return CAL_COLORS[(i < 0 ? 0 : i) % CAL_COLORS.length]; };
+const calName = (id) => byId(S.calendars, id)?.name || '';
+
+// The date an inbox row is next on (series: the next lesson), or null when it is over
+function findDate(x, td) {
+  if (x.every_weeks) return nextWeekly(x, td);
+  if (x.start_date >= td) return x.start_date;
+  return x.end_date && x.end_date >= td ? td : null;
+}
+
+function findNewCount() {
+  const td = today(), until = addDays(td, 31);
+  return S.inbox.filter((x) => x.status === 'new' && !x.every_weeks && (findDate(x, td) || '9') <= until).length;
+}
+
+// Choices that differ from the default, as removable chips
+function findChips(f) {
+  const chips = [];
+  for (const id of f.off) if (byId(S.calendars, id)) chips.push([`cal|${id}`, `${t('fNot')} ${calName(id)}`]);
+  if (f.days !== FIND_DEFAULT.days) chips.push(['days', f.days ? t('fNext', { p: t('fP' + f.days) }) : t('fPall')]);
+  for (const k of ['new', 'followed', 'hidden']) {
+    if (f.show.includes(k) !== FIND_DEFAULT.show.includes(k))
+      chips.push([`show|${k}`, `${f.show.includes(k) ? '' : t('fNot') + ' '}${t('fShow_' + k)}`]);
+  }
+  if (!f.series) chips.push(['series', t('fNoSeries')]);
+  return chips;
+}
+
+function findMatches(f, q) {
+  const td = today(), until = f.days ? addDays(td, f.days) : '9999-12-31';
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  return S.inbox.map((x) => ({ x, d: findDate(x, td) })).filter(({ x, d }) => d && d <= until
+    && !f.off.includes(x.calendar_id) && f.show.includes(x.status)
+    && (f.series || !x.every_weeks)
+    && words.every((w) => `${x.title} ${calName(x.calendar_id)}`.toLowerCase().includes(w)));
+}
+
+function findRow({ x, d }) {
+  const lang = getLang();
+  const ev = x.event_id && byId(S.events, x.event_id);
+  const nTasks = ev ? S.tasks.filter((k) => k.event_id === ev.id).length : 0;
+  const when = x.every_weeks ? weeklyLabel(x, { date: d, days: 0 })
+    : x.end_date ? `${fmtDate(x.start_date, lang)} – ${fmtDate(x.end_date, lang)}` : '';
+  const meta = [calName(x.calendar_id), when].filter(Boolean).map(esc).join(' · ');
+  let acts;
+  if (x.status === 'followed' && ev) {
+    acts = `<button class="small" data-act="editEvent" data-id="${ev.id}">✅ ${nTasks ? esc(t('nTasks', nTasks)) : t('addTasks')}</button>`;
+  } else if (x.status === 'hidden') {
+    acts = `<button class="small" data-act="inbox" data-id="${x.id}|new">${t('unhide')}</button>`;
+  } else {
+    acts = `<button class="small primary" data-act="inbox" data-id="${x.id}|followed">${t('follow')}</button>
+      <button class="icon" data-act="inbox" data-id="${x.id}|hidden" aria-label="${esc(t('hide'))}" title="${esc(t('hide'))}">✕</button>`;
+  }
+  return `
+    <div class="row find st-${x.status}" style="--cal:${calColor(x.calendar_id)}">
+      <span class="dot" aria-hidden="true"></span>
+      <div class="time">${esc(x.start_time || t('allDayShort'))}</div>
+      <div class="body"><div class="ttl">${x.status === 'followed' ? '✓ ' : ''}${esc(x.title)}</div>
+        <div class="meta">${meta}</div></div>
+      <div class="find-acts">${acts}</div>
+    </div>`;
+}
+
+function dayHeading(iso, td) {
+  const n = daysBetween(td, iso);
+  const lang = getLang();
+  const label = new Date(`${iso}T12:00:00Z`).toLocaleDateString({ da: 'da-DK', en: 'en-GB', fr: 'fr-FR' }[lang] || 'da-DK',
+    { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
+  return n === 0 ? `${t('todayWord')} · ${label}` : n === 1 ? `${t('tomorrow')} · ${label}` : label;
+}
+
+function findListHtml() {
+  const f = findFilter(), td = today();
+  const all = findMatches(f, S.findQ);
+  const singles = all.filter(({ x }) => !x.every_weeks);
+  const series = all.filter(({ x }) => x.every_weeks);
+  if (!all.length) return `<p class="empty">${esc(t('findEmpty'))}</p>`;
+  const days = [];
+  for (const it of singles) {
+    const last = days[days.length - 1];
+    if (last && last.d === it.d) last.items.push(it); else days.push({ d: it.d, items: [it] });
+  }
+  return `
+    ${days.map(({ d, items }) => `<h3 class="day">${esc(dayHeading(d, td))}</h3>
+      <div class="list">${items.map(findRow).join('')}</div>`).join('')}
+    ${series.length ? `<details class="weekly"${singles.length ? '' : ' open'}><summary>🔁 ${esc(t('weeklyEvents'))} (${series.length})</summary>
+      <div class="list">${series.map(findRow).join('')}</div></details>` : ''}`;
+}
+
+function viewFind() {
+  const f = findFilter();
+  const chips = findChips(f);
+  const cals = pickCals();
+  const top = `<div class="toolbar find-bar">
+      <button data-act="calView" data-id="list">‹ ${t('tabs.calendar')}</button>
+      <input type="search" id="findQ" placeholder="${esc(t('findSearch'))}" value="${esc(S.findQ)}" aria-label="${esc(t('findSearch'))}">
+      <button class="${chips.length ? 'on' : ''}" data-act="findFilter">⚙︎ ${chips.length ? esc(t('filterN', { n: chips.length })) : t('filter')}</button>
+    </div>`;
+  if (!cals.length) {
+    return `${top}<div class="card"><p>${esc(t('findNone'))}</p>
+      <button class="primary" data-act="tab" data-id="family">${t('tabs.family')} →</button></div>`;
+  }
+  return `${top}
+    ${chips.length ? `<div class="fchips">${chips.map(([k, label]) =>
+      `<button class="fchip" data-act="findChip" data-id="${esc(k)}">${esc(label)} <span aria-hidden="true">✕</span></button>`).join('')}
+      <button class="link" data-act="findReset">${t('fReset')}</button></div>` : ''}
+    <div class="ckey">${cals.filter((c) => !f.off.includes(c.id)).map((c) =>
+      `<span style="--cal:${calColor(c.id)}"><i class="dot"></i>${esc(c.name)}</span>`).join('')}</div>
+    <p class="hint">${esc(t('findHelp'))}</p>
+    <div id="findList">${findListHtml()}</div>`;
+}
+
+// The filter sheet: every option in one place; changes apply at once
+function findFilterSheet() {
+  const f = findFilter();
+  const cals = pickCals();
+  openDialog(`
+    <form id="findForm" class="form sheet">
+      <h2>⚙︎ ${t('filter')}</h2>
+      <fieldset><legend>${t('fCals')}</legend><div class="checks">${cals.map((c) => `
+        <label class="check" style="--cal:${calColor(c.id)}"><input type="checkbox" name="cal" value="${c.id}" ${f.off.includes(c.id) ? '' : 'checked'}>
+          <span><i class="dot"></i>${esc(c.name)}</span></label>`).join('')}</div></fieldset>
+      <fieldset><legend>${t('fPeriod')}</legend><div class="checks">${FIND_DAYS.map((d) => `
+        <label class="check"><input type="radio" name="days" value="${d}" ${f.days === d ? 'checked' : ''}>
+          <span>${esc(t('fP' + (d || 'all')))}</span></label>`).join('')}</div></fieldset>
+      <fieldset><legend>${t('fShow')}</legend><div class="checks">${['new', 'followed', 'hidden'].map((k) => `
+        <label class="check"><input type="checkbox" name="show" value="${k}" ${f.show.includes(k) ? 'checked' : ''}>
+          <span>${esc(cap(t('fShow_' + k)))}</span></label>`).join('')}</div></fieldset>
+      <label class="check"><input type="checkbox" name="series" ${f.series ? 'checked' : ''}><span>${esc(t('fSeries'))}</span></label>
+      <div class="btns">
+        <button type="button" data-act="findReset">${t('fReset')}</button>
+        <span class="grow"></span>
+        <button class="primary" type="button" data-act="close">${t('fDone')}</button>
+      </div>
+    </form>`);
+  const form = document.getElementById('findForm');
+  form.onchange = () => {
+    const fd = new FormData(form);
+    const on = fd.getAll('cal');
+    saveFindFilter({
+      off: cals.map((c) => c.id).filter((id) => !on.includes(id)),
+      days: Number(fd.get('days')) || 0,
+      show: fd.getAll('show'),
+      series: fd.get('series') === 'on',
+    });
+    render();
+  };
+}
+
+// Search: only the list is redrawn, so the keyboard stays up
+document.addEventListener('input', (e) => {
+  if (e.target.id !== 'findQ') return;
+  S.findQ = e.target.value;
+  const el = document.getElementById('findList');
+  if (el) el.innerHTML = findListHtml();
+});
 
 // Tasks attached to an event + quick suggestions (parents)
 function eventTasksSection(ev) {
@@ -1241,11 +1424,13 @@ function eventTasksSection(ev) {
 function eventForm(ev, preset = null) {
   const e0 = ev || { type: 'vacation', title: '', start_date: today(), end_date: '', yearly: false, remind_days: 14, roles: ['all'], ...preset };
   const fixed = !!ev?.imported; // title and dates come from the phone
+  const followed = ev && S.inbox.find((x) => x.event_id === ev.id && x.status === 'followed');
   openDialog(`
     <form id="eventForm" class="form">
       <h2>${ev ? `${eventIcon(ev.type)} ${esc(ev.title)}` : t('newEvent')}</h2>
       ${eventTasksSection(ev)}
-      ${fixed ? `<p class="hint">📱 ${esc(t('fromPhone'))}</p>` : ''}
+      ${followed ? `<p class="hint">🔍 ${esc(t('followedFrom', { cal: calName(followed.calendar_id) }))}</p>`
+        : fixed ? `<p class="hint">📱 ${esc(t('fromPhone'))}</p>` : ''}
       <label>${t('kind')}<select name="type">${['vacation', 'anniversary', 'birthday', 'other'].map((k) =>
         `<option value="${k}" ${k === e0.type ? 'selected' : ''}>${esc(t('types.' + k))}</option>`).join('')}</select></label>
       <label>${t('title')}<input name="title" value="${esc(e0.title)}" required ${fixed ? 'disabled' : ''}></label>
@@ -1256,6 +1441,7 @@ function eventForm(ev, preset = null) {
       <fieldset><legend>${t('visibleTo')}</legend>${roleCheckboxes('roles', ITEM_ROLES, e0.roles)}</fieldset>
       <div class="btns">
         ${ev && !fixed ? `<button type="button" class="danger" data-act="delEvent" data-id="${ev.id}">${t('delete')}</button>` : ''}
+        ${followed ? `<button type="button" class="danger" data-act="unfollow" data-id="${followed.id}">${t('unfollow')}</button>` : ''}
         <span class="grow"></span>
         <button type="button" data-act="close">${t('cancel')}</button>
         <button class="primary" type="submit">${t('save')}</button>
@@ -1351,15 +1537,16 @@ function calendarSection() {
         <label>${t('yourCode')}<div class="copyrow"><input class="mono" value="${esc(s.token)}" readonly>
           <button type="button" class="small primary" data-act="copyCode">${t('copy')}</button></div></label>
         <p class="meta">${s.last_sync_at ? `${esc(t('lastSync'))}: ${esc(when)}<br>${esc(s.last_result || '')}` : esc(t('notSynced'))}</p>
-        ${S.calendars.length ? `<div class="cal-list"><div class="cal-head"><span>${esc(t('calendars'))}</span>
-            <span>${esc(t('calInclude'))}</span><span>${esc(t('calYearly'))}</span></div>
-          ${S.calendars.map((c) => `<div class="cal-row">
+        ${S.calendars.length ? `<div class="cal-list">
+          ${S.calendars.map((c) => { const mode = c.included ? 'on' : c.pick ? 'pick' : 'off'; return `<div class="cal-row">
             <span class="cal-name">${esc(c.name)}</span>
-            <button type="button" class="switch ${c.included ? 'on' : ''}" data-act="calToggle" data-id="${c.id}|included"
-              role="switch" aria-checked="${c.included}" aria-label="${esc(t('calInclude'))} ${esc(c.name)}"></button>
-            <button type="button" class="switch ${c.yearly ? 'on' : ''}" data-act="calToggle" data-id="${c.id}|yearly"
-              role="switch" aria-checked="${c.yearly}" aria-label="${esc(t('calYearly'))} ${esc(c.name)}" ${c.included ? '' : 'disabled'}></button>
-          </div>`).join('')}</div>
+            <div class="seg cal-mode" role="radiogroup" aria-label="${esc(c.name)}">${['off', 'pick', 'on'].map((m) => `
+              <button type="button" class="${mode === m ? 'on' : ''}" data-act="calMode" data-id="${c.id}|${m}"
+                role="radio" aria-checked="${mode === m}">${esc(t('mode_' + m))}</button>`).join('')}</div>
+            <label class="yearly ${mode === 'on' ? '' : 'off'}"><span>${esc(t('calYearly'))}</span>
+              <button type="button" class="switch ${c.yearly ? 'on' : ''}" data-act="calToggle" data-id="${c.id}|yearly"
+                role="switch" aria-checked="${c.yearly}" aria-label="${esc(t('calYearly'))} ${esc(c.name)}" ${mode === 'on' ? '' : 'disabled'}></button></label>
+          </div>`; }).join('')}</div>
           <p class="hint">${esc(t('calListHelp'))}</p>` : ''}
         <div class="acts">
           <a class="btnlink primary-link" href="${shortcutGuide(s.token)}" target="_blank" rel="noopener">📖 ${t('howTo')}</a>
@@ -1534,14 +1721,46 @@ const ACTIONS = {
     try { await navigator.clipboard.writeText(S.sync.token); toast(t('copied')); }
     catch { document.querySelector('.cal-sync input.mono')?.select(); }
   },
-  calToggle: async (id) => {
-    const [calId, field] = id.split('|');
+  calToggle: async (id) => {   // "every year" (only for calendars set to All)
+    const calId = id.split('|')[0];
     const c = byId(S.calendars, calId);
-    const next = { included: c.included, yearly: c.yearly, [field]: !c[field] };
-    if (field === 'included' && !next.included && !confirm(t('calOffConfirm'))) return;
-    await run(sb.rpc('set_calendar', { p_id: calId, p_included: next.included, p_yearly: next.yearly }));
-    if (field === 'included' && next.included) toast(t('calOnNote'));
+    await run(sb.rpc('set_calendar_mode', { p_id: calId, p_mode: 'on', p_yearly: !c.yearly }));
     await refresh();
+  },
+  calMode: async (id) => {
+    const [calId, mode] = id.split('|');
+    const c = byId(S.calendars, calId);
+    const was = c.included ? 'on' : c.pick ? 'pick' : 'off';
+    if (mode === was) return;
+    if (mode === 'off' && was !== 'off' && !confirm(t('calOffConfirm'))) return;
+    if (mode === 'pick' && was === 'on' && !confirm(t('calToPickConfirm'))) return;
+    await run(sb.rpc('set_calendar_mode', { p_id: calId, p_mode: mode }));
+    if (mode === 'on') toast(t('calOnNote'));
+    if (mode === 'pick' && was === 'off') toast(t('calPickNote'));
+    await refresh();
+  },
+  calView: (id) => { S.calView = id; render(); window.scrollTo(0, 0); },
+  findFilter: () => findFilterSheet(),
+  findChip: (key) => {
+    const f = findFilter();
+    const [k, v] = key.split('|');
+    if (k === 'cal') f.off = f.off.filter((x) => x !== v);
+    if (k === 'days') f.days = FIND_DEFAULT.days;
+    if (k === 'series') f.series = true;
+    if (k === 'show') f.show = FIND_DEFAULT.show.includes(v) ? [...new Set([...f.show, v])] : f.show.filter((x) => x !== v);
+    saveFindFilter(f); render();
+  },
+  findReset: () => { saveFindFilter(FIND_DEFAULT); closeDialog(); render(); },
+  inbox: async (id) => {
+    const [rowId, status] = id.split('|');
+    const evId = await run(sb.rpc('inbox_set', { p_id: rowId, p_status: status }));
+    await refresh();
+    if (status === 'followed' && evId) { toast(t('followedToast')); eventForm(byId(S.events, evId)); }
+  },
+  unfollow: async (rowId) => {
+    if (!confirm(t('unfollowConfirm'))) return;
+    await run(sb.rpc('inbox_set', { p_id: rowId, p_status: 'new' }));
+    closeDialog(); await refresh();
   },
   delEvent: async (id) => { if (!confirm(t('confirmDelete'))) return;
     await run(sb.from('events').delete().eq('id', id)); closeDialog(); await refresh(); },

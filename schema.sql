@@ -634,6 +634,12 @@ create table if not exists user_calendars (
 alter table user_calendars enable row level security;
 drop policy if exists uc_select on user_calendars;
 create policy uc_select on user_calendars for select using (user_id = auth.uid());
+-- Three modes per calendar: off (nothing kept), on (included: every event is
+-- imported) or pick (events wait in the parent's "Find events" inbox until
+-- they are followed one by one – for busy feeds like Aula or ForældreIntra)
+alter table user_calendars add column if not exists pick boolean not null default false;
+alter table user_calendars drop constraint if exists user_calendars_one_mode;
+alter table user_calendars add constraint user_calendars_one_mode check (not (included and pick));
 
 -- Which parent's calendar(s) an imported event came from. An event is
 -- removed when no calendar has it any more (its tasks go with it).
@@ -645,6 +651,35 @@ create table if not exists event_sources (
   primary key (event_id, user_id, calendar_id)
 );
 alter table event_sources enable row level security;   -- server only
+
+-- "Find events": events from pick-mode calendars, one row per event (a weekly
+-- series such as a lesson is one row). Refreshed at every sync; whether a row
+-- is new, followed or hidden survives the refresh. Following an event copies
+-- it into `events` (where tasks can be attached); the sync keeps it up to date.
+create table if not exists calendar_inbox (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null references auth.users on delete cascade,
+  calendar_id  uuid not null references user_calendars on delete cascade,
+  ext_key      text not null,
+  title        text not null,
+  start_date   date not null,
+  end_date     date,
+  start_time   text check (start_time is null or start_time ~ '^\d{2}:\d{2}$'),  -- local time; null = all day
+  every_weeks  smallint,
+  repeat_until date,
+  skip_dates   date[] not null default '{}',
+  status       text not null default 'new' check (status in ('new','followed','hidden')),
+  event_id     uuid references events on delete set null,
+  first_seen   timestamptz not null default now(),
+  last_seen    timestamptz not null default now(),
+  unique (calendar_id, ext_key)
+);
+create index if not exists calendar_inbox_user on calendar_inbox(user_id, start_date);
+alter table calendar_inbox enable row level security;   -- read your own; changed through inbox_set()
+drop policy if exists ci_select on calendar_inbox;
+create policy ci_select on calendar_inbox for select using (user_id = auth.uid());
+grant select on calendar_inbox to authenticated;
+revoke insert, update, delete on calendar_inbox from anon, authenticated;
 
 create or replace function cal_ext_key(p_title text, p_date date, p_yearly boolean) returns text
 language sql immutable set search_path = public as $$
@@ -689,6 +724,7 @@ declare
   c  text[] := regexp_split_to_array(regexp_replace(trim(coalesce(p_calendars, '')), E'\\s*\\r?\\n\\s*', E'\n', 'g'), split_re);
   n int; i int; cal user_calendars; t text;
   seen_cals uuid[] := '{}'; n_saved int := 0; n_series int := 0; n_new_cals int := 0; n_cals int; msg text;
+  fr calendar_inbox; mv record; n_mv int; n_inbox_new int := 0;
 begin
   select m.* into me from sync_tokens st join members m on m.user_id = st.user_id
    where st.token = trim(coalesce(p_token, ''));
@@ -742,19 +778,23 @@ begin
     seen_cals := seen_cals || cal.id;
   end loop;
 
-  -- Events from switched-on calendars, saved in one go (fast even for thousands).
-  -- The same title on the same weekday at least 4 times, every 1 or 2 weeks
-  -- (gaps such as holidays allowed), is stored as ONE weekly series.
+  -- Events from switched-on and pick-mode calendars, read in one go (fast even
+  -- for thousands). The same title on the same weekday at least 4 times, every
+  -- 1 or 2 weeks (gaps such as holidays allowed), becomes ONE weekly series.
+  drop table if exists pg_temp.sync_src;
+  create temp table sync_src on commit drop as
   with r as (
     select left(btrim(regexp_replace(x.ti1, '[[:cntrl:]]', ' ', 'g')), 200) as tt,
            substr(x.s1, 1, 10)::date as d1, substr(x.e1, 1, 10)::date as d2,
-           lower(x.a1) in ('yes','true','1','ja','oui') and substr(x.e1, 12, 5) = '00:00' as allday_mid,
-           uc.id as cal_id, uc.yearly, uc.name as cal_name
+           lower(x.a1) in ('yes','true','1','ja','oui') as allday,
+           substr(x.s1, 12, 5) as tm, substr(x.e1, 12, 5) as etm,
+           uc.id as cal_id, uc.yearly and not uc.pick as yearly, uc.name as cal_name, uc.pick
       from unnest(ti, s, e, a, c) as x(ti1, s1, e1, a1, c1)   -- one pass (indexing big text arrays is slow)
-      join user_calendars uc on uc.user_id = me.user_id and uc.name = x.c1 and uc.included
+      join user_calendars uc on uc.user_id = me.user_id and uc.name = x.c1 and (uc.included or uc.pick)
   ), r2 as (
-    select tt, lower(tt) as lt, d1, cal_id, yearly, cal_name, extract(isodow from d1)::int as dow,
-           case when allday_mid and d2 > d1 then d2 - 1 else d2 end as d2   -- all-day events end at midnight the next day
+    select tt, lower(tt) as lt, d1, cal_id, yearly, cal_name, pick, extract(isodow from d1)::int as dow,
+           case when allday then null else tm end as tm,
+           case when allday and etm = '00:00' and d2 > d1 then d2 - 1 else d2 end as d2   -- all-day events end at midnight the next day
       from r where tt <> ''
   ), single as (          -- one-day, not-yearly occurrences, one per day
     select distinct cal_id, lt, dow, d1 from r2 where not yearly and (d2 is null or d2 <= d1)
@@ -765,23 +805,77 @@ begin
            case when bool_and(gap is null or gap % 14 = 0) then 14 else 7 end as step
       from gaps group by cal_id, lt, dow having count(*) >= 4
   ), ser as (            -- not too many gaps: at most as many skipped weeks as real ones
-    select ser0.*, (select min(tt) from r2 where r2.cal_id = ser0.cal_id and r2.lt = ser0.lt and r2.dow = ser0.dow) as title,
+    select ser0.*,
+           (select min(tt) from r2 where r2.cal_id = ser0.cal_id and r2.lt = ser0.lt and r2.dow = ser0.dow) as title,
+           (select min(tm) from r2 where r2.cal_id = ser0.cal_id and r2.lt = ser0.lt and r2.dow = ser0.dow) as tm,
+           (select pick from user_calendars where id = ser0.cal_id) as pick,
            (select name from user_calendars where id = ser0.cal_id) as cal_name,
            array(select g::date from generate_series(d_first, d_last, make_interval(days => step)) g
                   where g::date not in (select d1 from single sg where sg.cal_id = ser0.cal_id and sg.lt = ser0.lt and sg.dow = ser0.dow)
                   order by 1) as skips
       from ser0 where (d_last - d_first) / step + 1 - n_occ <= n_occ
-  ), src as (
-    select cal_ext_key(r2.tt, r2.d1, r2.yearly) as k, r2.tt as title, r2.cal_name, r2.d1 as start_date,
-           case when not r2.yearly and r2.d2 > r2.d1 then r2.d2 end as end_date, r2.yearly,
-           null::smallint as every_weeks, null::date as repeat_until, '{}'::date[] as skip_dates, r2.cal_id
-      from r2
-     where r2.yearly or (r2.d2 is not null and r2.d2 > r2.d1)
-        or not exists (select 1 from ser where ser.cal_id = r2.cal_id and ser.lt = r2.lt and ser.dow = r2.dow)
-    union all
-    select 'w|' || lt || '|' || dow || '|' || (step / 7), title, cal_name, d_first, null, false,
-           (step / 7)::smallint, d_last, skips, cal_id
-      from ser
+  )
+  select cal_ext_key(r2.tt, r2.d1, r2.yearly) as k, r2.tt as title, r2.cal_name, r2.d1 as start_date,
+         case when not r2.yearly and r2.d2 > r2.d1 then r2.d2 end as end_date, r2.yearly,
+         null::smallint as every_weeks, null::date as repeat_until, '{}'::date[] as skip_dates,
+         r2.cal_id, r2.pick, r2.tm
+    from r2
+   where r2.yearly or (r2.d2 is not null and r2.d2 > r2.d1)
+      or not exists (select 1 from ser where ser.cal_id = r2.cal_id and ser.lt = r2.lt and ser.dow = r2.dow)
+  union all
+  select 'w|' || lt || '|' || dow || '|' || (step / 7), title, cal_name, d_first, null, false,
+         (step / 7)::smallint, d_last, skips, cal_id, pick, tm
+    from ser;
+
+  -- Pick mode: a followed event that moved to another date or got a new title
+  -- in the school's calendar keeps following it (with its tasks) when there is
+  -- exactly one new event with the same title, or else on the same date.
+  update calendar_inbox set status = 'new' where user_id = me.user_id and status = 'followed' and event_id is null;
+  for fr in select ci.* from calendar_inbox ci
+             where ci.user_id = me.user_id and ci.status = 'followed' and ci.every_weeks is null
+               and ci.calendar_id = any(seen_cals)
+               and not exists (select 1 from sync_src x where x.cal_id = ci.calendar_id and x.k = ci.ext_key) loop
+    for i in 1..2 loop
+      select count(*) into n_mv from sync_src x
+       where x.cal_id = fr.calendar_id and x.every_weeks is null and not x.yearly
+         and case i when 1 then lower(x.title) = lower(fr.title) and abs(x.start_date - fr.start_date) <= 92
+                    else x.start_date = fr.start_date end
+         and not exists (select 1 from calendar_inbox o where o.calendar_id = x.cal_id and o.ext_key = x.k);
+      continue when n_mv <> 1;
+      select x.* into mv from sync_src x
+       where x.cal_id = fr.calendar_id and x.every_weeks is null and not x.yearly
+         and case i when 1 then lower(x.title) = lower(fr.title) and abs(x.start_date - fr.start_date) <= 92
+                    else x.start_date = fr.start_date end
+         and not exists (select 1 from calendar_inbox o where o.calendar_id = x.cal_id and o.ext_key = x.k);
+      if not exists (select 1 from events o where o.family_id = me.family_id and o.ext_key = mv.k) then
+        update events set ext_key = mv.k, title = mv.title, start_date = mv.start_date, end_date = mv.end_date
+         where id = fr.event_id;
+        update calendar_inbox set ext_key = mv.k where id = fr.id;
+      end if;
+      exit;
+    end loop;
+  end loop;
+
+  -- Pick mode: refresh the inbox (new / followed / hidden is kept)
+  with ins as (
+    insert into calendar_inbox(user_id, calendar_id, ext_key, title, start_date, end_date, start_time,
+                               every_weeks, repeat_until, skip_dates)
+    select distinct on (cal_id, k) me.user_id, cal_id, k, title, start_date, end_date, tm,
+           every_weeks, repeat_until, skip_dates
+      from sync_src where pick order by cal_id, k, start_date, tm
+    on conflict (calendar_id, ext_key) do update
+      set title = excluded.title, start_date = excluded.start_date, end_date = excluded.end_date,
+          start_time = excluded.start_time, every_weeks = excluded.every_weeks,
+          repeat_until = excluded.repeat_until, skip_dates = excluded.skip_dates, last_seen = now()
+    returning (xmax = 0) as is_new
+  )
+  select count(*) filter (where is_new) into n_inbox_new from ins;
+
+  -- Into the calendar: everything from switched-on calendars, followed ones from pick-mode calendars
+  with src as (
+    select * from sync_src x
+     where not x.pick or exists (select 1 from calendar_inbox ci where ci.calendar_id = x.cal_id
+                                  and ci.ext_key = x.k and ci.status = 'followed' and ci.event_id is not null)
   ), up as (
     insert into events(family_id, type, title, start_date, end_date, yearly, every_weeks, repeat_until, skip_dates,
                        remind_days, roles, created_by, ext_key, imported)
@@ -816,13 +910,18 @@ begin
      and es.last_seen < now()   -- now() = start of this run; rows seen in this run equal it
      and not exists (select 1 from events ev where ev.id = es.event_id and ev.start_date < current_date
                      and not ev.yearly and ev.every_weeks is null);
+  delete from calendar_inbox ci
+   where ci.user_id = me.user_id and ci.calendar_id = any(seen_cals) and ci.last_seen < now();
   perform remove_orphan_events(me.family_id);
 
   msg := format('Happy Life: %s begivenheder%s fra %s af %s kalendere.', n_saved,
                 case when n_series > 0 then format(' (heraf %s ugentlige)', n_series) else '' end,
                 (select count(*) from user_calendars where id = any(seen_cals) and included), n_cals);
+  if n_inbox_new > 0 then
+    msg := msg || format(' %s nye under Kalender → Find begivenheder.', n_inbox_new);
+  end if;
   if n_new_cals > 0 then
-    msg := msg || format(' %s nye kalendere – slå dem til i appen under Familie, hvis de skal med.', n_new_cals);
+    msg := msg || format(' %s nye kalendere – vælg i appen under Familie, om de skal med.', n_new_cals);
   end if;
   update sync_tokens set last_sync_at = now(), last_result = msg where user_id = me.user_id;
   return msg;
@@ -840,33 +939,96 @@ begin
   return r;
 end $$;
 
--- Switch a phone calendar on/off or change "every year". Switching off
--- removes its events (and their tasks) at once; switching on takes effect
--- at the next sync.
-create or replace function set_calendar(p_id uuid, p_included boolean, p_yearly boolean)
+-- Set a phone calendar to off / on / pick and change "every year".
+--  off:  its events (and their tasks) are removed at once
+--  on:   every event is imported at the next sync
+--  pick: events wait under Kalender → Find begivenheder until followed.
+--        Coming from "on", events that already have tasks stay, as followed.
+create or replace function set_calendar_mode(p_id uuid, p_mode text, p_yearly boolean default null)
 returns void language plpgsql security definer set search_path = public as $$
-declare cal user_calendars;
+declare cal user_calendars; y boolean;
 begin
+  if p_mode not in ('off', 'on', 'pick') then raise exception 'bad mode'; end if;
   select * into cal from user_calendars where id = p_id and user_id = auth.uid();
   if not found then raise exception 'calendar not found'; end if;
-  update user_calendars set included = p_included, yearly = p_yearly where id = p_id;
-  if not p_included then
+  y := coalesce(p_yearly, cal.yearly);
+  update user_calendars set included = p_mode = 'on', pick = p_mode = 'pick', yearly = y where id = p_id;
+
+  if p_mode = 'off' then
     delete from event_sources where calendar_id = p_id;
-  elsif p_yearly is distinct from cal.yearly then
-    update events ev set yearly = p_yearly, end_date = null,
-                         ext_key = cal_ext_key(ev.title, ev.start_date, p_yearly)
-     where ev.id in (select event_id from event_sources where calendar_id = p_id)
-       and not exists (select 1 from events o where o.family_id = ev.family_id and o.id <> ev.id
-                       and o.ext_key = cal_ext_key(ev.title, ev.start_date, p_yearly));
+    delete from calendar_inbox where calendar_id = p_id;
+  elsif p_mode = 'pick' and cal.included then
+    insert into calendar_inbox(user_id, calendar_id, ext_key, title, start_date, end_date,
+                               every_weeks, repeat_until, skip_dates, status, event_id)
+    select auth.uid(), p_id, ev.ext_key, ev.title, ev.start_date, ev.end_date,
+           ev.every_weeks, ev.repeat_until, ev.skip_dates, 'followed', ev.id
+      from events ev join event_sources es on es.event_id = ev.id and es.calendar_id = p_id
+     where exists (select 1 from tasks tk where tk.event_id = ev.id)
+    on conflict (calendar_id, ext_key) do nothing;
+    delete from event_sources es where es.calendar_id = p_id
+       and not exists (select 1 from calendar_inbox ci where ci.calendar_id = p_id and ci.event_id = es.event_id);
+  elsif p_mode = 'on' then
+    delete from calendar_inbox where calendar_id = p_id;   -- followed events stay; the next sync brings the rest
+    if y is distinct from cal.yearly then
+      update events ev set yearly = y, end_date = null, ext_key = cal_ext_key(ev.title, ev.start_date, y)
+       where ev.id in (select event_id from event_sources where calendar_id = p_id) and ev.every_weeks is null
+         and not exists (select 1 from events o where o.family_id = ev.family_id and o.id <> ev.id
+                         and o.ext_key = cal_ext_key(ev.title, ev.start_date, y));
+    end if;
   end if;
   perform remove_orphan_events(cal.family_id);
 end $$;
 
+-- Older app versions
+create or replace function set_calendar(p_id uuid, p_included boolean, p_yearly boolean)
+returns void language sql security definer set search_path = public as $$
+  select set_calendar_mode(p_id, case when p_included then 'on' else 'off' end, p_yearly)
+$$;
+
+-- Find events: follow (copy into the calendar, returns the event id), hide,
+-- or set back to new (unfollowing removes the event and its tasks unless
+-- another calendar also has it).
+create or replace function inbox_set(p_id uuid, p_status text)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare it calendar_inbox; cal user_calendars; ev_id uuid;
+begin
+  if p_status not in ('new', 'followed', 'hidden') then raise exception 'bad status'; end if;
+  select * into it from calendar_inbox where id = p_id and user_id = auth.uid() for update;
+  if not found then raise exception 'event not found'; end if;
+  select * into cal from user_calendars where id = it.calendar_id;
+  if not (my_roles() && array['mother','father']) or cal.family_id <> my_family() then
+    raise exception 'parents only';
+  end if;
+
+  if p_status = 'followed' then
+    if it.status = 'followed' and it.event_id is not null then return it.event_id; end if;
+    insert into events(family_id, type, title, start_date, end_date, yearly, every_weeks, repeat_until, skip_dates,
+                       remind_days, roles, created_by, ext_key, imported)
+      values (cal.family_id, cal_guess_type(it.title, cal.name), it.title, it.start_date, it.end_date, false,
+              it.every_weeks, it.repeat_until, it.skip_dates, case when it.every_weeks is null then 7 else 1 end,
+              '{mother,father}', auth.uid(), it.ext_key, true)
+      on conflict (family_id, ext_key) do update set title = events.title   -- already there (other calendar)
+      returning id into ev_id;
+    insert into event_sources(event_id, user_id, calendar_id) values (ev_id, auth.uid(), it.calendar_id)
+      on conflict (event_id, user_id, calendar_id) do update set last_seen = now();
+    update calendar_inbox set status = 'followed', event_id = ev_id where id = p_id;
+    return ev_id;
+  end if;
+
+  if it.event_id is not null then
+    delete from event_sources where event_id = it.event_id and calendar_id = it.calendar_id;
+    perform remove_orphan_events(cal.family_id);
+  end if;
+  update calendar_inbox set status = p_status, event_id = null where id = p_id;
+  return null;
+end $$;
+
 revoke execute on function sync_calendar(text,text,text,text,text,text), my_sync_token(boolean),
-  set_calendar(uuid,boolean,boolean), task_event_copy(), event_to_tasks(), remove_orphan_events(uuid),
+  set_calendar(uuid,boolean,boolean), set_calendar_mode(uuid,text,boolean), inbox_set(uuid,text), task_event_copy(), event_to_tasks(), remove_orphan_events(uuid),
   cal_ext_key(text,date,boolean), cal_guess_type(text,text) from public, anon, authenticated;
 grant execute on function sync_calendar(text,text,text,text,text,text) to anon, authenticated;
-grant execute on function my_sync_token(boolean), set_calendar(uuid,boolean,boolean) to authenticated;
+grant execute on function my_sync_token(boolean), set_calendar(uuid,boolean,boolean),
+  set_calendar_mode(uuid,text,boolean), inbox_set(uuid,text) to authenticated;
 
 -- ================================================================ login codes
 -- Sign in on another device with a short code made on a device where you are
