@@ -9,11 +9,13 @@ const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
+const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
 
 const S = {
   session: null, me: null, family: null, members: [],
   plans: [], tasks: [], done: [], takes: [], trackers: [], entries: [], events: [], points: [],
   sync: null, calendars: [], loginCode: null, suggestions: [], ideaTab: 'event',
+  places: [], chores: [], houseMode: 'todo',
   tab: 'home', authStep: 'email', authEmail: '', setupMode: 'create', ideaShift: {}, pushOn: false,
 };
 
@@ -74,7 +76,7 @@ async function loadAll() {
   const me = await run(sb.from('members').select('*').eq('user_id', uid()).maybeSingle());
   S.me = me;
   if (!me) return;
-  const [family, members, plans, tasks, done, takes, trackers, entries, events, points] = await Promise.all([
+  const [family, members, plans, tasks, done, takes, trackers, entries, events, points, places, chores] = await Promise.all([
     run(sb.from('families').select('*').eq('id', me.family_id).single()),
     run(sb.from('members').select('*').order('created_at')),
     run(sb.from('plans').select('*').order('created_at')),
@@ -85,8 +87,10 @@ async function loadAll() {
     run(sb.from('tracker_entries').select('*').order('done_on', { ascending: false })),
     run(sb.from('events').select('*')),
     run(sb.rpc('points_summary')),
+    run(sb.from('house_places').select('*').order('sort').order('created_at')),
+    run(sb.from('house_chores').select('*').order('sort').order('created_at')),
   ]);
-  Object.assign(S, { family, members, plans, tasks, done, takes, trackers, entries, events, points: points || [] });
+  Object.assign(S, { family, members, plans, tasks, done, takes, trackers, entries, events, points: points || [], places, chores });
   // Idea lists (only rows for my roles come back; a missing table just means none)
   const { data: sugg } = await sb.from('suggestions').select('*');
   S.suggestions = sugg || [];
@@ -114,6 +118,15 @@ function taskKind(task) {
   if (task.open) return 'open';
   if (task.assignees?.length) return 'assigned';
   return 'role';
+}
+
+const isHouse = (task) => !!task.place_id;
+
+// House chores are shown as "Chore – Room" using the current names
+function taskTitle(task) {
+  if (!isHouse(task)) return task.title;
+  const c = byId(S.chores, task.chore_id), p = byId(S.places, task.place_id);
+  return c && p ? `${c.name} – ${p.name}` : task.title;
 }
 
 // Everything the UI needs to know about a task right now
@@ -237,16 +250,17 @@ function render() {
   setLang(store('hl-lang') || getLang());
   if (!S.session) return renderAuth();
   if (!S.me) return renderSetup();
-  const tabs = ['home', 'tasks', 'moments', 'calendar', 'family'];
+  const tabs = ['home', 'tasks', 'house', 'moments', 'calendar', 'family'];
   const svg = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
   const icons = {
     home: svg('<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>'),
     tasks: svg('<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.5 12l2.5 2.5 4.5-5"/>'),
+    house: svg('<path d="M4 20V10.5L12 4l8 6.5V20"/><path d="M9 20v-5h6v5"/><path d="M15 3.5l5 0.5-0.5 5"/>'),
     moments: svg('<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>'),
     calendar: svg('<rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/>'),
     family: svg('<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2A4.5 4.5 0 0 1 21 18.5"/>'),
   };
-  const views = { home: viewHome, tasks: viewTasks, moments: viewMoments, calendar: viewCalendar, family: viewFamily };
+  const views = { home: viewHome, tasks: viewTasks, house: viewHouse, moments: viewMoments, calendar: viewCalendar, family: viewFamily };
   app.innerHTML = `
     <header class="top"><h1>${esc(t('tabs.' + S.tab))}</h1><span class="fam">${esc(S.family?.name)}</span></header>
     <main class="view">${views[S.tab]()}</main>
@@ -396,9 +410,11 @@ function viewHome() {
     .filter(({ ev, st }) => !ev.every_weeks && (st.ongoing || (st.days >= 0 && st.days <= ev.remind_days)))
     .sort((a, b) => a.st.days - b.st.days);
 
-  // Tasks for me in the current period
-  const mine = S.tasks.map((task) => ({ task, st: taskState(task) }))
-    .filter(({ st }) => st.active && !st.done && (st.kind === 'open' ? (st.took || !st.full) : st.forMe));
+  // Tasks for me in the current period (house chores only once I've taken them)
+  const all = S.tasks.map((task) => ({ task, st: taskState(task) }));
+  const mine = all.filter(({ task, st }) => st.active && !st.done && (isHouse(task) ? st.took
+    : st.kind === 'open' ? (st.took || !st.full) : st.forMe));
+  const houseFree = all.filter(({ task, st }) => isHouse(task) && st.active && !st.done && !st.took && !st.full).length;
 
   return `
     <p class="hello">${esc(t('hello', { name: S.me.display_name }))}</p>
@@ -409,6 +425,8 @@ function viewHome() {
     <h2>${esc(t('today'))}</h2>
     ${mine.length ? `<div class="list">${mine.map(({ task, st }) => taskRow(task, st)).join('')}</div>`
                   : `<p class="empty">${esc(t('nothingToday'))}</p>`}
+    ${houseFree ? `<button class="row go" data-act="tab" data-id="house"><span class="lead big">🧹</span>
+      <span class="body"><span class="ttl">${esc(t('houseHome', houseFree))}</span></span><span class="arrow">›</span></button>` : ''}
     ${!due.length && !mine.length ? `<p class="allgood">${esc(t('allGood'))}</p>` : ''}`;
 }
 
@@ -452,12 +470,12 @@ function taskRow(task, st, opts = {}) {
       }).join('')}</div>`;
     }
   }
-  const canEdit = task.created_by === uid() || isParent();
+  const canEdit = !isHouse(task) && (task.created_by === uid() || isParent());
   return `
     <div class="row ${st.done ? 'is-done' : ''}">
       ${st.kind === 'open' ? '' : `<div class="lead">${actions}</div>`}
       <div class="body">
-        <div class="ttl">${esc(task.title)}</div>
+        <div class="ttl">${esc(taskTitle(task))}</div>
         ${task.notes ? `<div class="notes">${esc(task.notes)}</div>` : ''}
         <div class="meta">${meta.map(esc).join(' · ')}</div>
         ${extra}
@@ -468,7 +486,7 @@ function taskRow(task, st, opts = {}) {
 }
 
 function viewTasks() {
-  const all = S.tasks.map((task) => ({ task, st: taskState(task) }));
+  const all = S.tasks.filter((task) => !isHouse(task)).map((task) => ({ task, st: taskState(task) }));
   const active = all.filter((x) => x.st.active || x.task.recurrence === 'once');
   const mine = active.filter(({ task, st }) => !task.plan_id && st.kind !== 'open' && st.forMe)
     .concat(active.filter(({ task, st }) => task.plan_id && st.kind === 'assigned' && st.forMe));
@@ -705,6 +723,215 @@ function planForm(plan) {
       const [created] = await run(sb.from('plans').insert(row).select());
       closeDialog(); await refresh();
       return taskForm(null, created.id); // straight on to the first task
+    }
+    closeDialog(); await refresh();
+  };
+}
+
+// ------------------------------------------------------------ house
+
+const houseTask = (placeId, choreId) => S.tasks.find((x) => x.place_id === placeId && x.chore_id === choreId);
+const sortOf = (list, id) => byId(list, id)?.sort ?? 0;
+
+function viewHouse() {
+  const parent = isParent();
+  const mode = parent ? S.houseMode : 'todo';
+  const seg = parent ? `<div class="seg house-seg">${['todo', 'setup', 'log'].map((m) =>
+    `<button data-act="houseMode" data-id="${m}" class="${mode === m ? 'on' : ''}">${esc(t('house.' + m))}</button>`).join('')}</div>` : '';
+  if (parent && !S.places.length && !S.chores.length) {
+    return `${seg}<div class="card"><p>${esc(t('house.empty'))}</p>
+      <button class="primary" data-act="seedHouse">${t('house.loadDefaults')}</button></div>`;
+  }
+  const body = mode === 'setup' ? houseSetup() : mode === 'log' ? houseLog() : houseTodo();
+  return (mode === 'todo' ? pointsCard() : '') + seg + body;
+}
+
+function houseRow(task, st, withPlace = false) {
+  const chore = byId(S.chores, task.chore_id);
+  const meta = [recLabel(task)];
+  if (task.points) meta.push(`⭐ ${t('pointsN', task.points)}`);
+  if (st.end && !st.done && task.recurrence !== 'daily') meta.push(t('dueBy', { date: fmtDate(st.end, getLang()) }));
+  let acts;
+  if (st.done) {
+    acts = `<span class="chip yes">✓ ${st.doneRows.map((d) => esc(memberName(d.done_by))).join(', ')}</span>
+      ${st.doneByMe ? `<button class="link" data-act="undo" data-id="${task.id}">${t('undo')}</button>` : ''}`;
+  } else if (st.took) {
+    acts = `<button class="small primary" data-act="done" data-id="${task.id}">${t('house.didIt')}</button>
+      <button class="small" data-act="untake" data-id="${task.id}">${t('untake')}</button>`;
+  } else if (st.full) {
+    acts = `<span class="chip">${t('full')}</span>`;
+  } else {
+    acts = `<button class="small primary" data-act="houseDone" data-id="${task.id}">${t('house.didIt')}</button>
+      <button class="small" data-act="take" data-id="${task.id}">${t('house.illDoIt')}</button>`;
+  }
+  const takers = !st.done && st.takers.length
+    ? `<div class="takers">${esc(t('takenBy'))}: ${st.takers.map((u) => `<span class="chip">${esc(memberName(u))}</span>`).join('')}
+       ${task.need > 1 ? `<span class="need">${st.takers.length}/${task.need}</span>` : ''}</div>` : '';
+  const where = withPlace ? `<span class="where">${esc(byId(S.places, task.place_id)?.name)}</span> ` : '';
+  return `
+    <div class="row hrow ${st.done ? 'is-done' : ''}">
+      <div class="body">
+        <div class="ttl">${where}${esc(chore?.name || task.title)}</div>
+        ${task.notes ? `<div class="notes">${esc(task.notes)}</div>` : ''}
+        <div class="meta">${meta.map(esc).join(' · ')}</div>
+        ${takers}
+        <div class="acts">${acts}</div>
+      </div>
+    </div>`;
+}
+
+function houseTodo() {
+  const items = S.tasks.filter(isHouse).map((task) => ({ task, st: taskState(task) })).filter((x) => x.st.active);
+  if (!items.length) return `<p class="empty">${esc(t(isParent() ? 'house.noneSetUp' : 'house.nothing'))}</p>`;
+  const byChore = (a, b) => sortOf(S.chores, a.task.chore_id) - sortOf(S.chores, b.task.chore_id);
+  const mineNow = items.filter((x) => x.st.took && !x.st.done);
+  const open = items.filter((x) => !x.st.took && !x.st.done);
+  const doneNow = items.filter((x) => x.st.done);
+
+  const placeCards = (outdoor) => S.places.filter((p) => p.outdoor === outdoor).map((p) => {
+    const rows = open.filter((x) => x.task.place_id === p.id).sort(byChore);
+    if (!rows.length) return '';
+    return `<div class="card place"><h3>${esc(p.name)}</h3>
+      <div class="list">${rows.map(({ task, st }) => houseRow(task, st)).join('')}</div></div>`;
+  }).join('');
+  const inside = placeCards(false), outside = placeCards(true);
+  const withPlace = (list) => list.map(({ task, st }) => houseRow(task, st, true)).join('');
+
+  return `
+    ${mineNow.length ? `<h2>${esc(t('house.mineNow'))}</h2><div class="list">${withPlace(mineNow)}</div>` : ''}
+    ${!inside && !outside ? `<p class="allgood">${esc(t('house.nothing'))}</p>` : ''}
+    ${inside ? `<h2>🏠 ${esc(t('house.indoor'))}</h2>${inside}` : ''}
+    ${outside ? `<h2>🌳 ${esc(t('house.outdoor'))}</h2>${outside}` : ''}
+    ${doneNow.length ? `<details><summary>${esc(t('house.doneNow'))} (${doneNow.length})</summary>
+      <div class="list">${withPlace(doneNow)}</div></details>` : ''}`;
+}
+
+function houseSetup() {
+  const section = (outdoor) => {
+    const places = S.places.filter((p) => p.outdoor === outdoor);
+    const chores = S.chores.filter((c) => c.outdoor === outdoor);
+    const io = outdoor ? 'out' : 'in';
+    return `
+      <h2>${outdoor ? '🌳' : '🏠'} ${esc(t('house.' + (outdoor ? 'outdoor' : 'indoor')))}</h2>
+      <div class="card">
+        <h3>${esc(t('house.choreTypes'))}</h3>
+        <div class="hchips">${chores.map((c) =>
+          `<button class="hchip type" data-act="editChoreType" data-id="${c.id}">${esc(c.name)} ✎</button>`).join('')}
+          <button class="hchip add" data-act="addChoreType" data-id="${io}">＋ ${t('house.addChore')}</button></div>
+      </div>
+      ${places.map((p) => `
+        <div class="card place">
+          <div class="plan-head"><h3>${esc(p.name)}</h3>
+            <button class="icon" data-act="editPlace" data-id="${p.id}" aria-label="${t('edit')}">✎</button></div>
+          <div class="hchips">${chores.map((c) => {
+            const tk = houseTask(p.id, c.id);
+            return `<button class="hchip ${tk ? 'on' : ''}" data-act="setChore" data-id="${p.id}|${c.id}">
+              ${esc(c.name)}${tk ? ` · ${esc(recLabel(tk))}${tk.need > 1 ? ` · ${tk.need}👤` : ''}${tk.points ? ` · ⭐${tk.points}` : ''}` : ''}</button>`;
+          }).join('') || `<span class="hint">${esc(t('house.noTypes'))}</span>`}</div>
+        </div>`).join('')}
+      <button class="add-place" data-act="addPlace" data-id="${io}">＋ ${t('house.addPlace')}</button>`;
+  };
+  return `<p class="hint">${esc(t('house.setupHelp'))}</p>${section(false)}${section(true)}`;
+}
+
+function houseLog() {
+  const ids = new Set(S.tasks.filter(isHouse).map((x) => x.id));
+  const since = isoMinus(30);
+  const rows = S.done.filter((d) => ids.has(d.task_id) && d.done_on >= since)
+    .sort((a, b) => b.done_on.localeCompare(a.done_on) || String(b.created_at).localeCompare(String(a.created_at)));
+  if (!rows.length) return `<p class="empty">${esc(t('house.noLog'))}</p>`;
+  const counts = {};
+  rows.forEach((d) => { counts[d.done_by] = (counts[d.done_by] || 0) + 1; });
+  const tally = Object.entries(counts).sort((a, b) => b[1] - a[1])
+    .map(([u, n]) => `<span class="chip yes">${esc(memberName(u))}: ${n}</span>`).join('');
+  return `
+    <h2>${esc(t('house.last30'))}</h2>
+    <div class="card"><div>${tally}</div></div>
+    <div class="list">${rows.map((d) => `
+      <div class="row"><div class="body">
+        <div class="ttl">${esc(taskTitle(byId(S.tasks, d.task_id)))}</div>
+        <div class="meta">${esc(fmtDate(d.done_on, getLang()))} · ${esc(memberName(d.done_by))}</div>
+      </div></div>`).join('')}</div>`;
+}
+
+// Set how often a chore is done in a room (or switch it off)
+function choreSetForm(placeId, choreId) {
+  const p = byId(S.places, placeId), c = byId(S.chores, choreId);
+  const tk = houseTask(placeId, choreId);
+  const recs = ['none', 'daily', 'weekdays', 'weekly', 'monthly', 'custom', 'yearly'];
+  const cur = tk ? tk.recurrence : 'weekly';
+  const on = 'daily weekdays weekly monthly custom yearly';
+  openDialog(`
+    <form id="choreForm" class="form">
+      <h2>${esc(c.name)} – ${esc(p.name)}</h2>
+      <label>${t('recurrence')}<select name="recurrence">${recs.map((r) =>
+        `<option value="${r}" ${r === cur ? 'selected' : ''}>${esc(r === 'none' ? t('house.off') : t('rec.' + r))}</option>`).join('')}</select></label>
+      <label data-rec="custom">${t('intervalN')}<input name="interval_days" type="number" min="1" value="${tk?.interval_days || 14}"></label>
+      <label data-rec="${on}">${t('need')}<input name="need" type="number" min="1" max="20" value="${tk?.need || 1}"></label>
+      <label data-rec="${on}">⭐ ${t('points')}<input name="points" type="number" min="0" max="1000" value="${tk?.points || 0}"></label>
+      <label data-rec="${on}">${t('note')}<input name="notes" value="${esc(tk?.notes || '')}"></label>
+      <div class="btns"><span class="grow"></span>
+        <button type="button" data-act="close">${t('cancel')}</button>
+        <button class="primary" type="submit">${t('save')}</button></div>
+    </form>`);
+  const form = document.getElementById('choreForm');
+  const sync = () => {
+    const r = form.elements.recurrence.value;
+    form.querySelectorAll('[data-rec]').forEach((el) => { el.hidden = !el.dataset.rec.split(' ').includes(r); });
+  };
+  form.elements.recurrence.onchange = sync; sync();
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(form);
+    const rec = f.get('recurrence');
+    if (rec === 'none') {
+      if (tk) await run(sb.from('tasks').delete().eq('id', tk.id));
+    } else {
+      const row = {
+        title: `${c.name} – ${p.name}`, notes: f.get('notes').trim() || null,
+        recurrence: rec, interval_days: rec === 'custom' ? Math.max(1, Number(f.get('interval_days')) || 1) : null,
+        need: Math.min(20, Math.max(1, Number(f.get('need')) || 1)),
+        points: Math.min(1000, Math.max(0, Math.round(Number(f.get('points')) || 0))),
+        open: true, roles: HOUSE_ROLES, assignees: [], place_id: placeId, chore_id: choreId,
+      };
+      // keep the start date when only the details change, so periods don't shift
+      if (!tk || tk.recurrence !== rec || tk.interval_days !== row.interval_days) row.start_date = today();
+      if (tk) await run(sb.from('tasks').update(row).eq('id', tk.id));
+      else await run(sb.from('tasks').insert(row));
+    }
+    closeDialog(); await refresh();
+  };
+}
+
+// Add/rename/move/delete a room (house_places) or a chore type (house_chores)
+function houseItemForm(table, item, outdoor) {
+  const isPlace = table === 'house_places';
+  const out = item ? item.outdoor : outdoor;
+  openDialog(`
+    <form id="houseItemForm" class="form">
+      <h2>${item ? t('edit') : t(isPlace ? 'house.addPlace' : 'house.addChore')}</h2>
+      <label>${t('house.name')}<input name="name" value="${esc(item?.name || '')}" required></label>
+      <label>${t('house.where')}<select name="outdoor">
+        <option value="in" ${out ? '' : 'selected'}>${esc(t('house.indoor'))}</option>
+        <option value="out" ${out ? 'selected' : ''}>${esc(t('house.outdoor'))}</option></select></label>
+      ${item && isPlace ? `<p class="hint">${esc(t('house.moveHint'))}</p>` : ''}
+      <div class="btns">
+        ${item ? `<button type="button" class="danger" data-act="delHouseItem" data-id="${table}|${item.id}">${t('delete')}</button>` : ''}
+        <span class="grow"></span>
+        <button type="button" data-act="close">${t('cancel')}</button>
+        <button class="primary" type="submit">${t('save')}</button>
+      </div>
+    </form>`);
+  document.getElementById('houseItemForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const row = { name: f.get('name').trim(), outdoor: f.get('outdoor') === 'out' };
+    if (!row.name) return;
+    if (item) await run(sb.from(table).update(row).eq('id', item.id));
+    else {
+      const list = isPlace ? S.places : S.chores;
+      row.sort = list.reduce((m, x) => Math.max(m, x.sort), 0) + 1;
+      await run(sb.from(table).insert(row));
     }
     closeDialog(); await refresh();
   };
@@ -1152,6 +1379,27 @@ const ACTIONS = {
   editPlan: (id) => planForm(byId(S.plans, id)),
   delPlan: async (id) => { if (!confirm(t('confirmDelete'))) return;
     await run(sb.from('plans').delete().eq('id', id)); closeDialog(); await refresh(); },
+
+  // house
+  houseMode: (id) => { S.houseMode = id; render(); window.scrollTo(0, 0); },
+  seedHouse: async () => { await run(sb.rpc('seed_house')); await refresh(); },
+  // "Done!" straight away: take it (if not already) and tick it in one go
+  houseDone: async (id) => {
+    const st = taskState(byId(S.tasks, id));
+    if (!st.took) await run(sb.rpc('take_task', { p_task: id, p_period: st.period }));
+    await run(sb.from('task_done').insert({ task_id: id, period: st.period, done_on: today() }));
+    toast('✓ 💪'); await refresh();
+  },
+  setChore: (id) => { const [p, c] = id.split('|'); choreSetForm(p, c); },
+  addPlace: (io) => houseItemForm('house_places', null, io === 'out'),
+  editPlace: (id) => houseItemForm('house_places', byId(S.places, id)),
+  addChoreType: (io) => houseItemForm('house_chores', null, io === 'out'),
+  editChoreType: (id) => houseItemForm('house_chores', byId(S.chores, id)),
+  delHouseItem: async (ref) => {
+    const [table, id] = ref.split('|');
+    if (!confirm(t('house.confirmDel'))) return;
+    await run(sb.from(table).delete().eq('id', id)); closeDialog(); await refresh();
+  },
 
   newMoment: () => momentForm(null),
   editMoment: (id) => momentForm(byId(S.trackers, id)),

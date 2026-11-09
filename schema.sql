@@ -972,3 +972,135 @@ create policy sugg_select on suggestions for select
   using (auth.uid() is not null and ('all' = any(roles) or roles && my_roles())
          and coalesce(ends_on, starts_on, current_date) >= current_date);
 grant select on suggestions to authenticated;
+
+-- ================================================================ house chores
+-- Rooms/areas (indoor and outdoor) and chore types, both editable by parents.
+-- A chore for a room is an open task with place_id + chore_id set: parents
+-- choose how often per room, children take it / tick it off as a family task
+-- (and earn its points, if any). A new family starts with the default list.
+
+create table if not exists house_places (
+  id         uuid primary key default gen_random_uuid(),
+  family_id  uuid not null default my_family() references families on delete cascade,
+  name       text not null check (length(trim(name)) > 0),
+  outdoor    boolean not null default false,
+  sort       int not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists house_chores (
+  id         uuid primary key default gen_random_uuid(),
+  family_id  uuid not null default my_family() references families on delete cascade,
+  name       text not null check (length(trim(name)) > 0),
+  outdoor    boolean not null default false,
+  sort       int not null default 0,
+  created_at timestamptz not null default now()
+);
+create index if not exists house_places_family on house_places(family_id);
+create index if not exists house_chores_family on house_chores(family_id);
+
+alter table tasks add column if not exists place_id uuid references house_places on delete cascade;
+alter table tasks add column if not exists chore_id uuid references house_chores on delete cascade;
+alter table tasks drop constraint if exists task_house_pair;
+alter table tasks add constraint task_house_pair check ((place_id is null) = (chore_id is null));
+create unique index if not exists tasks_house_unique on tasks(place_id, chore_id) where place_id is not null;
+create index if not exists tasks_chore on tasks(chore_id);
+
+alter table house_places enable row level security;
+alter table house_chores enable row level security;
+do $$
+declare t text;
+begin
+  foreach t in array array['house_places','house_chores'] loop
+    execute format('drop policy if exists %1$s_select on %1$s', t);
+    execute format('create policy %1$s_select on %1$s for select using (family_id = my_family())', t);
+    execute format('drop policy if exists %1$s_insert on %1$s', t);
+    execute format('create policy %1$s_insert on %1$s for insert
+      with check (family_id = my_family() and i_am_parent())', t);
+    execute format('drop policy if exists %1$s_update on %1$s', t);
+    execute format('create policy %1$s_update on %1$s for update
+      using (family_id = my_family() and i_am_parent()) with check (family_id = my_family())', t);
+    execute format('drop policy if exists %1$s_delete on %1$s', t);
+    execute format('create policy %1$s_delete on %1$s for delete
+      using (family_id = my_family() and i_am_parent())', t);
+  end loop;
+end $$;
+
+-- House chores: only parents create/change them, and only with their own family's rooms
+create or replace function house_ok(p_place uuid, p_chore uuid) returns boolean
+language sql stable set search_path = public as $$
+  select p_place is null or (i_am_parent()
+    and exists (select 1 from house_places x where x.id = p_place and x.family_id = my_family())
+    and exists (select 1 from house_chores y where y.id = p_chore and y.family_id = my_family()))
+$$;
+
+drop policy if exists tasks_insert on tasks;
+create policy tasks_insert on tasks for insert with check (
+  family_id = my_family() and created_by = auth.uid()
+  and all_in_my_family(assignees)
+  and (assignees <@ array[auth.uid()] or i_am_parent())
+  and (plan_id is null or i_am_parent())
+  and (points = 0 or i_am_parent())
+  and (event_id is null or i_am_parent())
+  and house_ok(place_id, chore_id));
+drop policy if exists tasks_update on tasks;
+create policy tasks_update on tasks for update
+  using (family_id = my_family() and task_visible(roles, assignees, created_by)
+         and (created_by = auth.uid() or i_am_parent()))
+  with check (family_id = my_family() and all_in_my_family(assignees)
+         and (assignees <@ array[auth.uid()] or i_am_parent())
+         and (plan_id is null or i_am_parent())
+         and (points = 0 or i_am_parent())
+         and (event_id is null or i_am_parent())
+         and house_ok(place_id, chore_id));
+
+-- The default list. Does nothing if the family already has rooms or chore types.
+create or replace function seed_house_for(p_family uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if exists (select 1 from house_places where family_id = p_family)
+     or exists (select 1 from house_chores where family_id = p_family) then
+    return;
+  end if;
+  insert into house_places(family_id, name, outdoor, sort)
+    select p_family, n, false, i::int from unnest(array[
+      'Carl', 'Victor', 'Elizabeth', 'Repo 1. sal', 'Køkken', 'Spisestue', 'Stue', 'Kontor',
+      'Mor & Far', 'Badeværelse Mor & Far', 'Badeværelse 1. sal', 'Badeværelse v. Kontor',
+      'Bryggers', 'Kælder', 'Fyrrum', 'Carport', 'Udekøkken']) with ordinality as x(n, i);
+  insert into house_places(family_id, name, outdoor, sort)
+    select p_family, n, true, i::int from unnest(array[
+      'Terasse Øst', 'Terasse Syd', 'Terasse Vest', 'Græsplane', 'Terasse Hjørne', 'Foran hus'])
+      with ordinality as x(n, i);
+  insert into house_chores(family_id, name, outdoor, sort)
+    select p_family, n, false, i::int from unnest(array[
+      'Støvsug', 'Vask gulv', 'Tør støv af', 'Vand planter', 'Ryd op']) with ordinality as x(n, i);
+  insert into house_chores(family_id, name, outdoor, sort)
+    select p_family, n, true, i::int from unnest(array[
+      'Slå græs', 'Fej blade', 'Fjern ukrudt', 'Rens', 'Giv olie']) with ordinality as x(n, i);
+end $$;
+
+-- New families get the list; a parent can load it later with seed_house()
+create or replace function family_seed_house() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform seed_house_for(new.id);
+  return new;
+end $$;
+drop trigger if exists family_seed_house on families;
+create trigger family_seed_house after insert on families
+  for each row execute function family_seed_house();
+
+create or replace function seed_house()
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not i_am_parent() then raise exception 'parents only'; end if;
+  perform seed_house_for(my_family());
+end $$;
+
+-- Existing families that have no house list yet get the default one
+select seed_house_for(id) from families;
+
+revoke execute on function seed_house_for(uuid), family_seed_house() from anon, authenticated, public;
+revoke execute on function seed_house(), house_ok(uuid, uuid) from anon, public;
+grant execute on function seed_house(), house_ok(uuid, uuid) to authenticated;
+grant select, insert, update, delete on house_places, house_chores to authenticated;

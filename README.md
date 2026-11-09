@@ -1,7 +1,7 @@
 # Happy Life 💛
 
 A family web app (installable on iPhone from Safari) for daily tasks, plans for the
-children, family tasks anyone can take, vacations and anniversaries, and "moments"
+children, family tasks anyone can take, house chores per room, vacations and anniversaries, and "moments"
 between husband and wife with reminders when it's time again.
 
 Danish, English and French – switch on the login screen or under **Family → Language**.
@@ -14,6 +14,7 @@ Danish, English and French – switch on the login screen or under **Family → 
 | **Plans** | Mother/father create plans (e.g. "Morning routine") with tasks assigned to specific children – daily, weekly, monthly, yearly, once, or every X days. Each child ticks off their own; parents see ✓/○ per child. |
 | **Family tasks** | Open to everyone (or chosen roles), with "people needed". Anyone takes it for the current period; it's full when enough have taken it, and done when a taker ticks it. Like HØBK activities. |
 | **Points** | A parent can give a task points (0–1000). Whoever ticks it off earns them; undo takes them back. Each child sees their own ⭐ counter on Home and Tasks, parents see every child's, with this week's points too. Points are kept even if the task is later deleted. |
+| **House** 🧹 | Rooms/areas (indoor and outdoor) × chore types (Støvsug, Vask gulv, Slå græs …). Parents choose per room how often each chore is due (and optional points); children see the free chores grouped by room and tap **Done!**, or **I'll do it** to claim one first. Parents also get a 30-day log of who did what. Rooms and chore types are added, renamed, moved or deleted under **House → Setup**. |
 | **Role tasks** | E.g. a husband-only task – invisible to the wife and children. |
 | **Moments** | "When did I last …" – each with its own reminder interval in days. When the days have passed it appears on Home under *Time for something special* with an idea. Defaults on a new family: flowers + surprise (husband), surprise (wife), out together + trip together (both). |
 | **Calendar** | Vacations, anniversaries, birthdays – typed in, or brought in from the parents' iPhone calendars with a Shortcut (guide: `kalender-guide.html`, opened from Family → Calendar from iPhone). Yearly events show how many years; each shows on Home a chosen number of days before. |
@@ -22,6 +23,16 @@ Danish, English and French – switch on the login screen or under **Family → 
 | **Family** | Invite code, members and roles. Only the admin (whoever created the family) can change roles, so a child can't make themself "wife". |
 
 Privacy is enforced in the database (Row Level Security), not just hidden in the app.
+
+### House chores – default list
+A new family starts with this list (an existing family without rooms can load it with
+**House → Load the default list**). No chore is switched on until a parent sets how often.
+
+- **Indoor rooms:** Carl, Victor, Elizabeth, Repo 1. sal, Køkken, Spisestue, Stue, Kontor, Mor & Far,
+  Badeværelse Mor & Far, Badeværelse 1. sal, Badeværelse v. Kontor, Bryggers, Kælder, Fyrrum, Carport, Udekøkken
+- **Indoor chores:** Støvsug, Vask gulv, Tør støv af, Vand planter, Ryd op
+- **Outdoor areas:** Terasse Øst, Terasse Syd, Terasse Vest, Græsplane, Terasse Hjørne, Foran hus
+- **Outdoor chores:** Slå græs, Fej blade, Fjern ukrudt, Rens, Giv olie
 
 ## Setup (once, ~10 minutes)
 

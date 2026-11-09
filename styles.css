@@ -70,7 +70,7 @@ button, input, select { font: inherit; color: inherit; }
 
 .tabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  display: grid; grid-template-columns: repeat(6, 1fr);
   padding: 6px 4px calc(env(safe-area-inset-bottom) + 6px);
   background: var(--nav); border-top: 1px solid var(--nav-line);
 }
@@ -318,3 +318,23 @@ dialog::backdrop { background: rgba(30, 20, 10, .45); }
 }
 .toast.bad { background: var(--danger); color: #fff; }
 @keyframes pop { from { opacity: 0; transform: translate(-50%, 8px); } }
+
+/* ---------- house ---------- */
+.house-seg { margin: 8px 0 4px; }
+.card.place h3 { margin-bottom: 10px; }
+.hrow .acts { margin-top: 8px; }
+.where { color: var(--head); margin-right: 2px; }
+.where::after { content: ' ·'; color: var(--muted); }
+.hchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.card button.hchip, button.hchip {
+  border-radius: 999px; border: 1px dashed var(--muted); background: none; color: var(--muted);
+  padding: 6px 12px; font-size: .88rem; font-weight: 600;
+}
+.card button.hchip.on { border: 1px solid var(--ok); background: var(--ok-soft); color: var(--ok); font-weight: 700; }
+.card button.hchip.type { border-style: solid; color: var(--ink); }
+.card button.hchip.add { border-color: var(--head); color: var(--head); }
+button.add-place { margin: 0 0 8px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); padding: 10px 16px; font-weight: 700; }
+.row.go { width: 100%; text-align: left; align-items: center; margin-top: 10px; font: inherit; color: inherit; cursor: pointer; }
+.row.go .arrow { font-size: 1.4rem; color: var(--muted); }
+.tabs button { min-width: 0; font-size: .66rem; }
+.tabs button span:last-child { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
