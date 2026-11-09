@@ -401,3 +401,8 @@ h3.day:first-letter { text-transform: uppercase; }
 .seg.zone-seg { position: sticky; top: env(safe-area-inset-top); z-index: 4; margin: 8px 0 4px;
   padding: 6px 0; background: color-mix(in srgb, var(--bg) 92%, transparent); flex-wrap: nowrap; }
 .seg.zone-seg button { flex: 1; padding: 8px 6px; font-size: .9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* update button + version */
+.top button.refresh { align-self: center; font-size: 1.25rem; padding: 4px 8px; margin-left: -4px; }
+.top .fam { flex: 1; text-align: right; }
+.version { text-align: center; color: var(--muted); font-size: .8rem; margin: 8px 0 0; }

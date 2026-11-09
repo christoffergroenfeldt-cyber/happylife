@@ -10,6 +10,25 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
+const APP_VERSION = '19'; // keep in step with CACHE in sw.js
+
+// Get the newest version: update the service worker, drop cached files, reload
+async function hardRefresh() {
+  toast(t('updating'));
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    if (reg) {
+      await reg.update();
+      const next = reg.installing || reg.waiting;
+      if (next) await new Promise((ok) => {
+        next.addEventListener('statechange', () => next.state === 'activated' && ok());
+        setTimeout(ok, 3000);
+      });
+    }
+  } catch { /* offline or no service worker */ }
+  try { await Promise.all((await caches.keys()).map((k) => caches.delete(k))); } catch { /* ignore */ }
+  location.replace(location.pathname + '?v=' + Date.now());
+}
 
 // Invite links (…/?invite=CODE) – kept until the family is joined, so it survives the e-mail login step.
 function pendingInvite() {
@@ -276,7 +295,8 @@ function render() {
   };
   const views = { home: viewHome, tasks: viewTasks, house: viewHouse, moments: viewMoments, calendar: viewCalendar, family: viewFamily };
   app.innerHTML = `
-    <header class="top"><h1>${esc(t('tabs.' + S.tab))}</h1><span class="fam">${esc(S.family?.name)}</span></header>
+    <header class="top"><h1>${esc(t('tabs.' + S.tab))}</h1><span class="fam">${esc(S.family?.name)}</span>
+      <button class="icon refresh" data-act="hardRefresh" aria-label="${t('updateApp')}" title="${t('updateApp')}">↻</button></header>
     <main class="view">${views[S.tab]()}</main>
     <nav class="tabs">${tabs.map((k) => `
       <button data-act="tab" data-id="${k}" class="${S.tab === k ? 'on' : ''}">
@@ -1534,7 +1554,9 @@ function viewFamily() {
     ${calendarSection()}
     <h2>${esc(t('language'))}</h2>
     ${langPicker()}
-    <button class="link out" data-act="signOut">${t('signOut')}</button>`;
+    <button class="link out" data-act="signOut">${t('signOut')}</button>
+    <p class="version">Happy Life · ${esc(t('version'))} ${APP_VERSION}
+      <button class="link" data-act="hardRefresh">↻ ${t('updateApp')}</button></p>`;
 }
 
 // A short code that signs this account in on another device (valid 10 minutes, once)
@@ -1697,6 +1719,7 @@ const ACTIONS = {
     await run(sb.from('plans').delete().eq('id', id)); closeDialog(); await refresh(); },
 
   // house
+  hardRefresh: () => hardRefresh(),
   houseMode: (id) => { S.houseMode = id; render(); window.scrollTo(0, 0); },
   setupZone: (id) => { S.setupZone = id; render(); window.scrollTo(0, 0); },
   momentTab: (id) => { S.momentTab = id; render(); window.scrollTo(0, 0); },

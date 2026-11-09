@@ -1,5 +1,5 @@
 // Happy Life service worker: app shell offline, data always live from Supabase.
-const CACHE = 'happylife-v18';
+const CACHE = 'happylife-v19';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'i18n.js', 'dates.js', 'config.js', 'templates.js',
   'manifest.json', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 
@@ -13,12 +13,18 @@ self.addEventListener('activate', (e) => {
     .then(() => self.clients.claim()));
 });
 
-// Network first for our own files (so updates show up), cache as fallback
+// Network first for our own files (so updates show up), cache as fallback.
+// 'no-cache' makes the browser re-check with GitHub Pages every time instead of
+// reusing its own HTTP cache (up to 10 min), which kept old versions around.
+const fresh = (req) => fetch(req.mode === 'navigate'
+  ? new Request(req.url, { cache: 'no-cache', credentials: 'same-origin' })
+  : new Request(req, { cache: 'no-cache' }));
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   e.respondWith(
-    fetch(e.request)
+    fresh(e.request)
       .then((res) => { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); return res; })
       .catch(() => caches.match(e.request))
   );
