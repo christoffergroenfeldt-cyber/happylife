@@ -338,3 +338,20 @@ button.add-place { margin: 0 0 8px; border-radius: 12px; border: 1px solid var(-
 .row.go .arrow { font-size: 1.4rem; color: var(--muted); }
 .tabs button { min-width: 0; font-size: .66rem; }
 .tabs button span:last-child { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- family moments (sunny) + house last-done ---------- */
+.card.moment.family { background: color-mix(in srgb, var(--sun2) 55%, var(--surface)); color: var(--ink); }
+.card.moment.family.due { background: var(--sun2); }
+.moment.family h3 { color: var(--head); }
+.moment.family h3::before { display: none; }
+.moment.family .meta, .moment.family .hist, .moment.family details summary { color: var(--muted); }
+.moment.family .meta strong { color: var(--ink); }
+.moment.family .bar span { background: var(--sun3); }
+.moment.family .idea { background: color-mix(in srgb, var(--sun1) 70%, var(--surface)); color: var(--ink); }
+.moment.family button.icon { color: var(--muted); }
+.moment.family button.link { color: var(--head); }
+.moment.family button.primary { background: var(--head); border-color: var(--head); color: var(--surface); }
+.moment.family .acts button:not(.primary) { color: var(--ink); border-color: var(--line); }
+.kicon { font-size: 1.2rem; }
+.planline { margin-top: 8px; padding: 8px 12px; border-radius: 12px; background: var(--surface); font-size: .92rem; }
+.hchip small.last { display: block; font-size: .74rem; font-weight: 600; opacity: .85; }

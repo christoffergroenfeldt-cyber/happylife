@@ -1104,3 +1104,73 @@ revoke execute on function seed_house_for(uuid), family_seed_house() from anon, 
 revoke execute on function seed_house(), house_ok(uuid, uuid) from anon, public;
 grant execute on function seed_house(), house_ok(uuid, uuid) to authenticated;
 grant select, insert, update, delete on house_places, house_chores to authenticated;
+
+-- ================================================================ family moments
+-- Moments for the whole family (roles = {all}): vacation, takeaway, restaurant,
+-- movie, weekend trip, theme park … with "when did we last" + a planned next
+-- time (date + note). Everyone sees them and can log one; only parents create,
+-- change, plan or delete them. A new family starts with six of them.
+
+alter table trackers drop constraint if exists trackers_kind_check;
+alter table trackers add constraint trackers_kind_check check (kind in
+  ('flowers','surprise','date','trip','custom',
+   'vacation','takeaway','restaurant','movie','weekend','themepark'));
+alter table trackers add column if not exists planned_on date;
+alter table trackers add column if not exists plan_note text;
+
+drop policy if exists trackers_insert on trackers;
+create policy trackers_insert on trackers for insert
+  with check (family_id = my_family() and created_by = auth.uid()
+              and (not 'all' = any(roles) or i_am_parent()));
+drop policy if exists trackers_update on trackers;
+create policy trackers_update on trackers for update
+  using (family_id = my_family() and can_see(roles, created_by)
+         and (not 'all' = any(roles) or i_am_parent()))
+  with check (family_id = my_family() and (not 'all' = any(roles) or i_am_parent()));
+drop policy if exists trackers_delete on trackers;
+create policy trackers_delete on trackers for delete
+  using (family_id = my_family() and can_see(roles, created_by)
+         and (not 'all' = any(roles) or i_am_parent()));
+
+-- Logging a moment on (or after) its planned date means the plan happened: clear it
+create or replace function tracker_entry_clears_plan() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  update trackers set planned_on = null, plan_note = null
+   where id = new.tracker_id and planned_on is not null and planned_on <= new.done_on + 3;
+  return new;
+end $$;
+drop trigger if exists tracker_entry_clears_plan on tracker_entries;
+create trigger tracker_entry_clears_plan after insert on tracker_entries
+  for each row execute function tracker_entry_clears_plan();
+
+create or replace function seed_family_moments_for(p_family uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if exists (select 1 from trackers where family_id = p_family and 'all' = any(roles)) then
+    return;
+  end if;
+  insert into trackers(family_id, title, kind, roles, interval_days, created_by) values
+    (p_family, 'Ferie',              'vacation',  '{all}', 180, null),
+    (p_family, 'Takeaway',           'takeaway',  '{all}', 14,  null),
+    (p_family, 'Restaurant',         'restaurant','{all}', 60,  null),
+    (p_family, 'Film',               'movie',     '{all}', 30,  null),
+    (p_family, 'Weekendtur',         'weekend',   '{all}', 90,  null),
+    (p_family, 'Forlystelsespark',   'themepark', '{all}', 180, null);
+end $$;
+
+create or replace function family_seed_moments() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform seed_family_moments_for(new.id);
+  return new;
+end $$;
+drop trigger if exists family_seed_moments on families;
+create trigger family_seed_moments after insert on families
+  for each row execute function family_seed_moments();
+
+-- Existing families without family moments get the six defaults
+select seed_family_moments_for(id) from families;
+
+revoke execute on function seed_family_moments_for(uuid), family_seed_moments(),
+  tracker_entry_clears_plan() from anon, authenticated, public;

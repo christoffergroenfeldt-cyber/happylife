@@ -401,8 +401,11 @@ function viewHome() {
   // Moments that are due
   const due = S.trackers
     .map((tr) => ({ tr, st: trackerStatus(tr.interval_days, entriesOf(tr.id).map((e) => e.done_on), td) }))
-    .filter((x) => x.st.dueIn <= 0)
+    .filter((x) => x.st.dueIn <= 0 && !plannedAhead(x.tr))
     .sort((a, b) => a.st.dueIn - b.st.dueIn);
+  // Planned moments in the next 14 days
+  const plannedSoon = S.trackers.filter((tr) => plannedAhead(tr) && daysBetween(td, tr.planned_on) <= 14)
+    .sort((a, b) => a.planned_on.localeCompare(b.planned_on));
 
   // Events within their reminder window
   const upcoming = S.events
@@ -421,7 +424,8 @@ function viewHome() {
     ${pointsCard()}
     ${due.length ? `<h2>${esc(t('timeFor'))}</h2>${due.map(({ tr, st }) => momentCard(tr, st, true)).join('')}` : ''}
     <h2>${esc(t('upcoming'))}</h2>
-    ${upcoming.length ? upcoming.map(({ ev, st }) => eventRow(ev, st)).join('') : `<p class="empty">${esc(t('noUpcoming'))}</p>`}
+    ${plannedSoon.map(plannedRow).join('')}
+    ${upcoming.length ? upcoming.map(({ ev, st }) => eventRow(ev, st)).join('') : plannedSoon.length ? '' : `<p class="empty">${esc(t('noUpcoming'))}</p>`}
     <h2>${esc(t('today'))}</h2>
     ${mine.length ? `<div class="list">${mine.map(({ task, st }) => taskRow(task, st)).join('')}</div>`
                   : `<p class="empty">${esc(t('nothingToday'))}</p>`}
@@ -730,6 +734,16 @@ function planForm(plan) {
 
 // ------------------------------------------------------------ house
 
+// Latest completion of a task, in any period
+function lastDone(task) {
+  return S.done.filter((d) => d.task_id === task.id).reduce((a, d) => (!a || d.done_on > a.done_on ? d : a), null);
+}
+function lastAgo(d) {
+  if (!d) return t('house.never');
+  const n = daysBetween(d.done_on, today());
+  return `${t('house.last')} ${n <= 0 ? t('house.today') : t('daysAgo', n)}`;
+}
+
 const houseTask = (placeId, choreId) => S.tasks.find((x) => x.place_id === placeId && x.chore_id === choreId);
 const sortOf = (list, id) => byId(list, id)?.sort ?? 0;
 
@@ -751,6 +765,7 @@ function houseRow(task, st, withPlace = false) {
   const meta = [recLabel(task)];
   if (task.points) meta.push(`⭐ ${t('pointsN', task.points)}`);
   if (st.end && !st.done && task.recurrence !== 'daily') meta.push(t('dueBy', { date: fmtDate(st.end, getLang()) }));
+  if (!st.done) { const ld = lastDone(task); meta.push(ld ? `${lastAgo(ld)} (${memberName(ld.done_by)})` : t('house.never')); }
   let acts;
   if (st.done) {
     acts = `<span class="chip yes">✓ ${st.doneRows.map((d) => esc(memberName(d.done_by))).join(', ')}</span>
@@ -826,7 +841,8 @@ function houseSetup() {
           <div class="hchips">${chores.map((c) => {
             const tk = houseTask(p.id, c.id);
             return `<button class="hchip ${tk ? 'on' : ''}" data-act="setChore" data-id="${p.id}|${c.id}">
-              ${esc(c.name)}${tk ? ` · ${esc(recLabel(tk))}${tk.need > 1 ? ` · ${tk.need}👤` : ''}${tk.points ? ` · ⭐${tk.points}` : ''}` : ''}</button>`;
+              ${esc(c.name)}${tk ? ` · ${esc(recLabel(tk))}${tk.need > 1 ? ` · ${tk.need}👤` : ''}${tk.points ? ` · ⭐${tk.points}` : ''}
+              <small class="last">${esc(lastAgo(lastDone(tk)))}</small>` : ''}</button>`;
           }).join('') || `<span class="hint">${esc(t('house.noTypes'))}</span>`}</div>
         </div>`).join('')}
       <button class="add-place" data-act="addPlace" data-id="${io}">＋ ${t('house.addPlace')}</button>`;
@@ -940,6 +956,23 @@ function houseItemForm(table, item, outdoor) {
 // ------------------------------------------------------------ moments
 
 const entriesOf = (id) => S.entries.filter((e) => e.tracker_id === id);
+const FAMILY_KINDS = ['vacation', 'takeaway', 'restaurant', 'movie', 'weekend', 'themepark'];
+const COUPLE_KINDS = ['flowers', 'surprise', 'date', 'trip'];
+const KIND_ICON = { vacation: '🏖️', takeaway: '🥡', restaurant: '🍽️', movie: '🎬', weekend: '🧳', themepark: '🎢', custom: '⭐' };
+const isFamilyMoment = (tr) => tr.roles.includes('all');
+const canEditMoment = (tr) => !isFamilyMoment(tr) || isParent();
+// The planned next time, while it is today or later
+const plannedAhead = (tr) => (tr.planned_on && tr.planned_on >= today() ? tr.planned_on : null);
+
+function plannedRow(tr) {
+  const n = daysBetween(today(), tr.planned_on);
+  return `
+    <div class="row event" data-act="tab" data-id="moments">
+      <div class="lead big">${KIND_ICON[tr.kind] || '💛'}</div>
+      <div class="body"><div class="ttl">${esc(tr.title)}${tr.plan_note ? ` · ${esc(tr.plan_note)}` : ''}</div>
+        <div class="meta">${esc(fmtDate(tr.planned_on, getLang()))} · <strong>${esc(n === 0 ? t('isToday') : t('inDays', n))}</strong></div></div>
+    </div>`;
+}
 
 function ideaFor(tr) {
   const list = IDEAS[getLang()][tr.kind] || IDEAS[getLang()].custom;
@@ -948,23 +981,31 @@ function ideaFor(tr) {
 }
 
 function momentCard(tr, st, compact = false) {
+  const fam = isFamilyMoment(tr);
+  const plan = plannedAhead(tr);
   const lastTxt = st.last ? `${t('lastDone')}: ${fmtDate(st.last, getLang())} (${t('daysAgo', st.since)})` : t('never');
-  const dueTxt = st.dueIn < 0 ? t('overdueBy', -st.dueIn) : st.dueIn === 0 ? t('dueToday') : t('dueIn', st.dueIn);
+  const dueTxt = plan ? (plan === today() ? t('plannedToday') : t('plannedIn', daysBetween(today(), plan)))
+    : st.dueIn < 0 ? t('overdueBy', -st.dueIn) : st.dueIn === 0 ? t('dueToday') : t('dueIn', st.dueIn);
+  const due = st.dueIn <= 0 && !plan;
   const pct = st.last ? Math.min(100, Math.round((st.since / tr.interval_days) * 100)) : 100;
   const hist = entriesOf(tr.id).slice(0, 5);
+  const editable = canEditMoment(tr);
   return `
-    <div class="card moment kind-${tr.kind} ${st.dueIn <= 0 ? 'due' : ''}">
+    <div class="card moment kind-${tr.kind} ${fam ? 'family' : ''} ${due ? 'due' : ''}">
       <div class="m-head">
-        <div><h3>${esc(tr.title)}</h3><div class="meta">${roleChips(tr.roles)} · ${esc(t('every', tr.interval_days))}</div></div>
-        ${compact ? '' : `<button class="icon" data-act="editMoment" data-id="${tr.id}" aria-label="${t('edit')}">✎</button>`}
+        <div><h3>${fam ? `<span class="kicon">${KIND_ICON[tr.kind] || '⭐'}</span>` : ''}${esc(tr.title)}</h3>
+          <div class="meta">${fam ? esc(t('wholeFamily')) : roleChips(tr.roles)} · ${esc(t('every', tr.interval_days))}</div></div>
+        ${compact || !editable ? '' : `<button class="icon" data-act="editMoment" data-id="${tr.id}" aria-label="${t('edit')}">✎</button>`}
       </div>
       <div class="bar"><span style="width:${pct}%"></span></div>
       <div class="meta">${esc(lastTxt)} · <strong>${esc(dueTxt)}</strong></div>
-      ${st.dueIn <= 0 ? `<div class="idea">💡 ${esc(ideaFor(tr))}
+      ${tr.planned_on ? `<div class="planline">📅 ${esc(t('planned'))}: <strong>${esc(fmtDate(tr.planned_on, getLang()))}</strong>${tr.plan_note ? ` – ${esc(tr.plan_note)}` : ''}</div>` : ''}
+      ${due ? `<div class="idea">💡 ${esc(ideaFor(tr))}
         <button class="link" data-act="idea" data-id="${tr.id}">${t('anotherIdea')}</button></div>` : ''}
       <div class="acts">
         <button class="primary" data-act="logMoment" data-id="${tr.id}">${t('logIt')}</button>
         <button data-act="logOther" data-id="${tr.id}">${t('logOther')}</button>
+        ${editable && !compact ? `<button data-act="planMoment" data-id="${tr.id}">📅 ${t(tr.planned_on ? 'changePlan' : 'plan')}</button>` : ''}
       </div>
       ${!compact && hist.length ? `<details><summary>${t('history')}</summary><ul class="hist">${hist.map((e) => `
         <li>${fmtDate(e.done_on, getLang())} ${t('by')} ${esc(memberName(e.done_by))}${e.note ? ` – ${esc(e.note)}` : ''}
@@ -975,12 +1016,18 @@ function momentCard(tr, st, compact = false) {
 
 function viewMoments() {
   const td = today();
-  const cards = S.trackers
+  const order = (x) => (plannedAhead(x.tr) ? 100000 + daysBetween(td, x.tr.planned_on) : x.st.dueIn);
+  const items = S.trackers
     .map((tr) => ({ tr, st: trackerStatus(tr.interval_days, entriesOf(tr.id).map((e) => e.done_on), td) }))
-    .sort((a, b) => a.st.dueIn - b.st.dueIn)
-    .map(({ tr, st }) => momentCard(tr, st)).join('');
-  return `<div class="toolbar"><button class="primary" data-act="newMoment">＋ ${t('newMoment')}</button></div>
-    ${cards || `<p class="empty">${esc(t('noMoments'))}</p>`}
+    .sort((a, b) => order(a) - order(b));
+  const fam = items.filter((x) => isFamilyMoment(x.tr)).map(({ tr, st }) => momentCard(tr, st)).join('');
+  const own = items.filter((x) => !isFamilyMoment(x.tr)).map(({ tr, st }) => momentCard(tr, st)).join('');
+  return `<div class="toolbar">
+      ${isParent() ? `<button class="primary" data-act="newFamilyMoment">＋ ${t('newFamilyMoment')}</button>` : ''}
+      <button class="${isParent() ? '' : 'primary'}" data-act="newMoment">＋ ${t('newMoment')}</button></div>
+    ${fam ? `<h2>👨‍👩‍👧‍👦 ${esc(t('momentsFamily'))}</h2>${fam}` : ''}
+    ${own ? `<h2>💛 ${esc(t('momentsOwn'))}</h2>${own}` : ''}
+    ${!fam && !own ? `<p class="empty">${esc(t('noMoments'))}</p>` : ''}
     ${ideasSection()}`;
 }
 
@@ -1036,16 +1083,20 @@ function ideaCard(x) {
     </div>`;
 }
 
-function momentForm(tr) {
-  const m = tr || { title: '', kind: 'custom', roles: myRoles().length ? [...myRoles()] : ['all'], interval_days: 30 };
+function momentForm(tr, family = false) {
+  const m = tr || (family ? { title: '', kind: 'vacation', roles: ['all'], interval_days: 90 }
+    : { title: '', kind: 'custom', roles: myRoles().length ? [...myRoles()] : ['all'], interval_days: 30 });
+  const famNow = m.roles.includes('all');
+  const kinds = famNow ? [...FAMILY_KINDS, 'custom', ...COUPLE_KINDS] : [...COUPLE_KINDS, 'custom', ...FAMILY_KINDS];
+  const roleList = isParent() ? ITEM_ROLES : ROLES; // only parents make whole-family moments
   openDialog(`
     <form id="momentForm" class="form">
-      <h2>${tr ? t('edit') : t('newMoment')}</h2>
+      <h2>${tr ? t('edit') : t(family ? 'newFamilyMoment' : 'newMoment')}</h2>
       <label>${t('title')}<input name="title" value="${esc(m.title)}" required></label>
-      <label>${t('kind')}<select name="kind">${Object.keys(IDEAS.en).map((k) =>
-        `<option value="${k}" ${k === m.kind ? 'selected' : ''}>${esc(t('kinds.' + k))}</option>`).join('')}</select></label>
+      <label>${t('kind')}<select name="kind">${kinds.map((k) =>
+        `<option value="${k}" ${k === m.kind ? 'selected' : ''}>${esc((famNow && KIND_ICON[k] ? KIND_ICON[k] + ' ' : '') + t('kinds.' + k))}</option>`).join('')}</select></label>
       <label>${t('intervalDays')}<input name="interval_days" type="number" min="1" value="${m.interval_days}" required></label>
-      <fieldset><legend>${t('visibleTo')}</legend>${roleCheckboxes('roles', ITEM_ROLES, m.roles)}</fieldset>
+      <fieldset><legend>${t('visibleTo')}</legend>${roleCheckboxes('roles', roleList, m.roles)}</fieldset>
       <div class="btns">
         ${tr ? `<button type="button" class="danger" data-act="delMoment" data-id="${tr.id}">${t('delete')}</button>` : ''}
         <span class="grow"></span>
@@ -1062,6 +1113,36 @@ function momentForm(tr) {
     if (tr) await run(sb.from('trackers').update(row).eq('id', tr.id));
     else await run(sb.from('trackers').insert(row));
     closeDialog(); await refresh();
+  };
+  if (!tr) {
+    const f = document.getElementById('momentForm');
+    f.elements.kind.onchange = () => { if (!f.elements.title.dataset.typed) f.elements.title.value = t('kinds.' + f.elements.kind.value); };
+    f.elements.title.oninput = () => { f.elements.title.dataset.typed = '1'; };
+    if (family) f.elements.title.value = t('kinds.' + m.kind);
+  }
+}
+
+// Plan the next time: a date and a note (e.g. "Legoland" or "Mallorca")
+function momentPlanForm(tr) {
+  const h = t('planNoteHint.' + tr.kind);
+  const hint = h.startsWith('planNoteHint') ? '' : h;
+  openDialog(`
+    <form id="momentPlanForm" class="form">
+      <h2>📅 ${esc(tr.title)}</h2>
+      <label>${t('date')}<input name="planned_on" type="date" min="${today()}" value="${tr.planned_on || ''}" required></label>
+      <label>${t('planNote')}<input name="plan_note" value="${esc(tr.plan_note || '')}" placeholder="${esc(hint)}"></label>
+      <div class="btns">
+        ${tr.planned_on ? `<button type="button" class="danger" data-act="clearPlan" data-id="${tr.id}">${t('removePlan')}</button>` : ''}
+        <span class="grow"></span>
+        <button type="button" data-act="close">${t('cancel')}</button>
+        <button class="primary" type="submit">${t('save')}</button>
+      </div>
+    </form>`);
+  document.getElementById('momentPlanForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    await run(sb.from('trackers').update({ planned_on: f.get('planned_on'), plan_note: f.get('plan_note').trim() || null }).eq('id', tr.id));
+    closeDialog(); toast('📅'); await refresh();
   };
 }
 
@@ -1402,6 +1483,12 @@ const ACTIONS = {
   },
 
   newMoment: () => momentForm(null),
+  newFamilyMoment: () => momentForm(null, true),
+  planMoment: (id) => momentPlanForm(byId(S.trackers, id)),
+  clearPlan: async (id) => {
+    await run(sb.from('trackers').update({ planned_on: null, plan_note: null }).eq('id', id));
+    closeDialog(); await refresh();
+  },
   editMoment: (id) => momentForm(byId(S.trackers, id)),
   delMoment: async (id) => { if (!confirm(t('confirmDelete'))) return;
     await run(sb.from('trackers').delete().eq('id', id)); closeDialog(); await refresh(); },
