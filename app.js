@@ -12,7 +12,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '28'; // keep in step with CACHE in sw.js
+const APP_VERSION = '29'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -49,7 +49,7 @@ const S = {
   find: null, nearby: null, nearbyMeta: null, findItems: [],
   packs: [], packDone: [], todayDay: null,
   fdReady: false, fdOrder: [], fdIdeas: [], fdWeeks: [],
-  skemaWho: null, skemaWeek: null, skemaDay: null,
+  skemaWho: null, skemaWeek: null, skemaDay: null, skemaHidden: null,
   tab: 'home', authStep: 'email', authEmail: '', setupMode: pendingInvite() ? 'join' : 'create', ideaShift: {}, pushOn: false,
 };
 
@@ -140,6 +140,9 @@ async function loadAll() {
     sb.from('famday_weeks').select('*').gte('week_start', isoMinus(200)),
   ]);
   S.fdReady = !fd.error && !fdIdeas.error;
+  // Skema subjects hidden by the family (null = older database without the table)
+  const sh = await sb.from('skema_hidden').select('title');
+  S.skemaHidden = sh.error ? null : sh.data.map((x) => x.title.toLowerCase());
   Object.assign(S, { fdOrder: fd.data?.turn_order || [], fdIdeas: fdIdeas.data || [], fdWeeks: fdWeeks.data || [] });
   if (isParent()) {
     const td = today();
@@ -796,7 +799,9 @@ function calPeopleForm(cal) {
 // Lessons from calendars marked Skema, one child at a time, as a week grid.
 // They are left out of every other list; the Today page links here instead.
 
-const lessons = () => S.events.filter((ev) => ev.lesson);
+const lessonHidden = (ev) => (S.skemaHidden || []).includes(ev.title.trim().toLowerCase());
+const allLessons = () => S.events.filter((ev) => ev.lesson);
+const lessons = () => allLessons().filter((ev) => !lessonHidden(ev));
 const lessonsOn = (d, who) => lessons().filter((ev) => occursOn(ev, d) && (!who || (ev.people || []).includes(who)))
   .sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
 const skemaKids = () => [...new Set(lessons().flatMap((ev) => ev.people || []))].filter(isKidTag).sort((a, b) => a.localeCompare(b));
@@ -815,6 +820,18 @@ function skemaLink(d) {
     <span class="body"><span class="ttl">${esc(t('sk.title'))}</span>
       <span class="meta">${kids.map(({ k, n }) => `<b>${esc(personLabel(k))}</b> ${esc(t('sk.lessons', { n: n.length, t: n[0].start_time || '' }))}`).join(' · ')}</span></span>
     <span class="icon">›</span></button>`;
+}
+
+// Setup: tap a subject to hide or show it on the Skema page (e.g. RESS)
+function skemaSetupSection() {
+  if (!isParent() || S.skemaHidden === null) return '';
+  const titles = [...new Set(allLessons().map((ev) => ev.title.trim()))].sort((a, b) => a.localeCompare(b));
+  if (!titles.length) return '';
+  const n = (x) => allLessons().filter((ev) => ev.title.trim() === x).length;
+  return `<h2>📚 ${esc(t('sk.title'))}</h2>
+    <div class="card"><p class="meta">${esc(t('sk.hideHelp'))}</p>
+      <div class="kind-chips sk-hide">${titles.map((x) => { const off = S.skemaHidden.includes(x.toLowerCase());
+        return `<button class="hchip ${off ? 'hidden-subj' : 'on'}" data-act="skemaHide" data-id="${esc(x)}" aria-pressed="${!off}">${off ? '🚫 ' : ''}${esc(x)} <small>${n(x)}</small></button>`; }).join('')}</div></div>`;
 }
 
 function viewSkema() {
@@ -2335,6 +2352,7 @@ function viewFamily() {
     ${pushSection()}
     ${homeSection()}
     ${calendarSection()}
+    ${skemaSetupSection()}
     <h2>${esc(t('language'))}</h2>
     ${langPicker()}
     <button class="link out" data-act="signOut">${t('signOut')}</button>
@@ -2606,6 +2624,12 @@ const ACTIONS = {
     S.skemaWeek = weekStart(d || today()); render(); window.scrollTo(0, 0);
   },
   skemaWho: (k) => { S.skemaWho = k; render(); },
+  skemaHide: async (title) => {
+    const key = title.toLowerCase();
+    if (S.skemaHidden.includes(key)) await run(sb.from('skema_hidden').delete().eq('family_id', S.family.id).eq('title', key));
+    else await run(sb.from('skema_hidden').insert({ title: key }));
+    await refresh();
+  },
   skemaWeek: (n) => { S.skemaWeek = Number(n) ? addDays(S.skemaWeek || weekStart(today()), Number(n)) : weekStart(today()); S.skemaDay = null; render(); },
   calSchedule: async (id) => {
     const c = byId(S.calendars, id);

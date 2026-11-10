@@ -31,7 +31,7 @@ const STRINGS = {
     inviteCode: 'Invitationskode', create: 'Opret', join: 'Tilslut',
     roles: { all: 'Alle', child: 'Barn', mother: 'Mor', father: 'Far', husband: 'Ægtemand', wife: 'Hustru' },
     sk: {
-      title: 'Skema', week: 'Uge {n}', lessons: '{n} lekt. fra {t}', none: 'Intet skema endnu. Slå 📚 Skema til på skolens kalender under Opsætning → Kalender fra iPhone.',
+      title: 'Skema', week: 'Uge {n}', lessons: '{n} lekt. fra {t}', hideHelp: 'Tryk på et fag for at skjule det i skemaet (fx RESS). Tryk igen for at vise det.', none: 'Intet skema endnu. Slå 📚 Skema til på skolens kalender under Opsætning → Kalender fra iPhone.',
       help: 'Lektionerne kommer fra kalendere med 📚 Skema slået til (Opsætning → Kalender fra iPhone). De vises kun her.',
     },
     fd: {
@@ -263,7 +263,7 @@ const STRINGS = {
     inviteCode: 'Invite code', create: 'Create', join: 'Join',
     roles: { all: 'Everyone', child: 'Child', mother: 'Mother', father: 'Father', husband: 'Husband', wife: 'Wife' },
     sk: {
-      title: 'Timetable', week: 'Week {n}', lessons: '{n} lessons from {t}', none: 'No timetable yet. Turn on 📚 Timetable for the school calendar under Setup → Calendar from iPhone.',
+      title: 'Timetable', week: 'Week {n}', lessons: '{n} lessons from {t}', hideHelp: 'Tap a subject to hide it from the timetable (e.g. RESS). Tap again to show it.', none: 'No timetable yet. Turn on 📚 Timetable for the school calendar under Setup → Calendar from iPhone.',
       help: 'Lessons come from calendars with 📚 Timetable on (Setup → Calendar from iPhone). They only show here.',
     },
     fd: {
@@ -495,7 +495,7 @@ const STRINGS = {
     inviteCode: 'Code d’invitation', create: 'Créer', join: 'Rejoindre',
     roles: { all: 'Tous', child: 'Enfant', mother: 'Mère', father: 'Père', husband: 'Mari', wife: 'Épouse' },
     sk: {
-      title: 'Emploi du temps', week: 'Semaine {n}', lessons: '{n} cours dès {t}', none: 'Pas encore d’emploi du temps. Activez 📚 Emploi du temps pour le calendrier de l’école sous Réglages → Calendrier de l’iPhone.',
+      title: 'Emploi du temps', week: 'Semaine {n}', lessons: '{n} cours dès {t}', hideHelp: 'Touchez une matière pour la masquer (ex. RESS). Touchez à nouveau pour l’afficher.', none: 'Pas encore d’emploi du temps. Activez 📚 Emploi du temps pour le calendrier de l’école sous Réglages → Calendrier de l’iPhone.',
       help: 'Les cours viennent des calendriers avec 📚 Emploi du temps activé (Réglages → Calendrier de l’iPhone). Ils ne s’affichent qu’ici.',
     },
     fd: {

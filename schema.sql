@@ -1672,3 +1672,19 @@ revoke execute on function set_calendar_schedule(uuid, boolean) from public, ano
 grant execute on function set_calendar_schedule(uuid, boolean) to authenticated;
 
 update events ev set lesson = event_lesson_calc(ev) where ev.imported and ev.lesson <> event_lesson_calc(ev);
+
+-- Skema: subjects the family doesn't want to see (e.g. RESS), matched on the
+-- lesson title, case-insensitive. Parents choose them under Setup.
+create table if not exists skema_hidden (
+  family_id uuid not null default my_family() references families on delete cascade,
+  title     text not null check (length(title) between 1 and 120),
+  primary key (family_id, title)
+);
+alter table skema_hidden enable row level security;
+drop policy if exists sh_select on skema_hidden;
+create policy sh_select on skema_hidden for select using (family_id = my_family());
+drop policy if exists sh_insert on skema_hidden;
+create policy sh_insert on skema_hidden for insert with check (family_id = my_family() and i_am_parent());
+drop policy if exists sh_delete on skema_hidden;
+create policy sh_delete on skema_hidden for delete using (family_id = my_family() and i_am_parent());
+grant select, insert, delete on skema_hidden to authenticated;
