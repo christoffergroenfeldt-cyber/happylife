@@ -528,19 +528,14 @@ button.row.skema-link { width: 100%; text-align: left; align-items: center; curs
 .sk-hide .hchip small { opacity: .7; margin-left: 2px; }
 .kind-chips.sk-hide { flex-wrap: wrap; overflow: visible; margin: 8px 0 0; padding: 0; }
 
-/* ---------- page tops with drawings ---------- */
-.top.hero { display: block; min-height: 150px; padding-bottom: 14px; overflow: hidden; }
-.hero-art { position: absolute; right: 6px; bottom: 0; width: 170px; height: 140px; z-index: 0; pointer-events: none; }
+/* ---------- page tops with drawings (slim: a quarter of the first size) ---------- */
+.top.hero { display: flex; align-items: center; gap: 10px; padding-bottom: 8px; }
+.hero-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0; }
+.hero-text h1 { font-size: 1.5rem; line-height: 1.15; }
+.top.hero .fam { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; flex: none; font-size: .85rem; }
+.hero-art { flex: none; width: 54px; height: 44px; pointer-events: none; }
 .hero-art svg { display: block; width: 100%; height: 100%; }
-.hero-moments .hero-art { width: 190px; }
-.hero-text { position: relative; z-index: 1; max-width: calc(100% - 180px); display: flex; flex-direction: column; gap: 2px; padding-top: 18px; }
-.hero-text h1 { font-size: 1.8rem; line-height: 1.1; }
-.top.hero .fam { white-space: normal; text-align: left; flex: none; }
-.top.hero .refresh { position: absolute; z-index: 2; top: calc(env(safe-area-inset-top) + 8px); right: 10px;
-  background: color-mix(in srgb, var(--surface) 75%, transparent); border-radius: 50%; }
-.top.hero-home { min-height: 250px; background: var(--sky); border-radius: 0 0 28px 28px; margin-bottom: 8px; }
-.hero-home .hero-art { left: 0; right: 0; top: 0; width: auto; height: auto; }
-.hero-home .hero-text { max-width: 62%; padding-top: 72px; }
-.hero-home .fam { color: var(--muted); font-weight: 700; }
-@media (min-width: 640px) { .hero-home .hero-art { left: 50%; right: auto; width: 640px; transform: translateX(-50%); } }
+.hero-moments .hero-art { width: 60px; }
+.hero-home .hero-art { width: 58px; height: 52px; background: var(--sky); border-radius: 14px; overflow: hidden; }
+.top.hero .refresh { flex: none; margin: 0; }
 @media (prefers-color-scheme: dark) { .hero-art svg { filter: brightness(.72) saturate(.85); } }

@@ -24,6 +24,10 @@ export const RAINBOW = svg(390, 290, `
   <rect x="300" y="210" width="8" height="24" rx="3" fill="#8A5A35"/>
   <circle cx="304" cy="204" r="16" fill="#6BB84A"/>`, 'preserveAspectRatio="xMidYMax slice"');
 
+// The same scene, cropped to the sun and the rainbow, for the slim page top
+export const RAINBOW_SMALL = RAINBOW.replace('viewBox="0 0 390 290"', 'viewBox="130 10 260 250"')
+  .replace('preserveAspectRatio="xMidYMax slice"', 'preserveAspectRatio="xMidYMid slice"');
+
 export const PAGE_ART = {
   // a school bag under the sun
   today: svg(170, 140, `

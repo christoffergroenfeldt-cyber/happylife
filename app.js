@@ -2,7 +2,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, VAPID_PUBLIC_KEY } from './config.js';
 import { t, setLang, getLang, LANGS, IDEAS, EVENT_TASKS, PACK_IDEAS } from './i18n.js';
-import { RAINBOW, PAGE_ART } from './art.js';
+import { RAINBOW_SMALL, PAGE_ART } from './art.js';
 import { CUISINES, CATALOG, NEARBY, onlineLinks, MAP_QUERY } from './catalog.js';
 import { geocode, fetchNearby } from './places.js';
 import { AGES, ROUTINES, ROUTINE_REC, ROUTINE_TIME, TEMPLATES } from './templates.js';
@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '31'; // keep in step with CACHE in sw.js
+const APP_VERSION = '32'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -332,11 +332,11 @@ function render() {
   const views = { today: viewToday, home: viewHome, tasks: viewTasks, house: viewHouse, moments: viewMoments, calendar: viewCalendar, family: viewFamily };
   app.innerHTML = `
     <header class="top hero hero-${S.tab}">
-      <div class="hero-art">${S.tab === 'home' ? RAINBOW : PAGE_ART[S.tab] || ''}</div>
       <div class="hero-text">
         <h1>${esc(S.tab === 'home' ? t('hello', { name: S.me.display_name }) : t('tabs.' + S.tab))}</h1>
         <span class="fam">${esc(S.tab === 'home' ? cap(new Date().toLocaleDateString(LOCALE(), { weekday: 'long', day: 'numeric', month: 'long' })) : S.family?.name)}</span>
       </div>
+      <div class="hero-art">${S.tab === 'home' ? RAINBOW_SMALL : PAGE_ART[S.tab] || ''}</div>
       <button class="icon refresh" data-act="hardRefresh" aria-label="${t('updateApp')}" title="${t('updateApp')}">↻</button></header>
     <main class="view">${views[S.tab]()}</main>
     <nav class="tabs" style="grid-template-columns:repeat(${tabs.length},1fr)">${tabs.map((k) => `
