@@ -809,22 +809,23 @@ begin
            case when allday then null else tm end as tm,
            case when allday and etm = '00:00' and d2 > d1 then d2 - 1 else d2 end as d2   -- all-day events end at midnight the next day
       from r where tt <> ''
-  ), single as (          -- one-day, not-yearly occurrences, one per day
-    select distinct cal_id, lt, dow, d1 from r2 where not yearly and (d2 is null or d2 <= d1)
+  ), single as (          -- one-day, not-yearly occurrences, one per day and time of day
+    select distinct cal_id, lt, dow, tm, d1 from r2 where not yearly and (d2 is null or d2 <= d1)
   ), gaps as (
-    select cal_id, lt, dow, d1, d1 - lag(d1) over (partition by cal_id, lt, dow order by d1) as gap from single
-  ), ser0 as (
-    select cal_id, lt, dow, min(d1) as d_first, max(d1) as d_last, count(*)::int as n_occ,
+    select cal_id, lt, dow, tm, d1, d1 - lag(d1) over (partition by cal_id, lt, dow, tm order by d1) as gap from single
+  ), ser0 as (            -- a series per calendar, title, weekday AND time (double lessons are two series)
+    select cal_id, lt, dow, tm, min(d1) as d_first, max(d1) as d_last, count(*)::int as n_occ,
            case when bool_and(gap is null or gap % 14 = 0) then 14 else 7 end as step
-      from gaps group by cal_id, lt, dow having count(*) >= 4
+      from gaps group by cal_id, lt, dow, tm having count(*) >= 4
   ), ser as (            -- not too many gaps: at most as many skipped weeks as real ones
     select ser0.*,
-           (select min(tt) from r2 where r2.cal_id = ser0.cal_id and r2.lt = ser0.lt and r2.dow = ser0.dow) as title,
-           (select min(tm) from r2 where r2.cal_id = ser0.cal_id and r2.lt = ser0.lt and r2.dow = ser0.dow) as tm,
+           (select min(tt) from r2 where r2.cal_id = ser0.cal_id and r2.lt = ser0.lt and r2.dow = ser0.dow
+                                     and r2.tm is not distinct from ser0.tm) as title,
            (select pick from user_calendars where id = ser0.cal_id) as pick,
            (select name from user_calendars where id = ser0.cal_id) as cal_name,
            array(select g::date from generate_series(d_first, d_last, make_interval(days => step)) g
-                  where g::date not in (select d1 from single sg where sg.cal_id = ser0.cal_id and sg.lt = ser0.lt and sg.dow = ser0.dow)
+                  where g::date not in (select d1 from single sg where sg.cal_id = ser0.cal_id and sg.lt = ser0.lt
+                                          and sg.dow = ser0.dow and sg.tm is not distinct from ser0.tm)
                   order by 1) as skips
       from ser0 where (d_last - d_first) / step + 1 - n_occ <= n_occ
   )
@@ -834,10 +835,13 @@ begin
          r2.cal_id, r2.pick, r2.tm
     from r2
    where r2.yearly or (r2.d2 is not null and r2.d2 > r2.d1)
-      or not exists (select 1 from ser where ser.cal_id = r2.cal_id and ser.lt = r2.lt and ser.dow = r2.dow)
+      or not exists (select 1 from ser where ser.cal_id = r2.cal_id and ser.lt = r2.lt and ser.dow = r2.dow
+                                         and ser.tm is not distinct from r2.tm)
   union all
-  select 'w|' || lt || '|' || dow || '|' || (step / 7), title, cal_name, d_first, null, false,
-         (step / 7)::smallint, d_last, skips, cal_id, pick, tm
+  -- the calendar's name keeps two children's "DAN on Tuesdays" apart (both parents
+  -- subscribing to the same feed still share one event)
+  select 'w|' || lt || '|' || dow || '|' || (step / 7) || '|' || coalesce(tm, '') || '|' || lower(cal_name),
+         title, cal_name, d_first, null, false, (step / 7)::smallint, d_last, skips, cal_id, pick, tm
     from ser;
 
   -- Pick mode: a followed event that moved to another date or got a new title
