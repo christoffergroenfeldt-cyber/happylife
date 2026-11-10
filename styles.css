@@ -570,3 +570,25 @@ button.row.skema-link { width: 100%; text-align: left; align-items: center; curs
 /* event rows: the calendar shows as its colour dot (the filter chips above name them) */
 .list.cols .row.event { padding: 10px 12px; gap: 10px; }
 .list.cols .row.event .lead.big { font-size: 1.2rem; }
+
+/* ---------- house: chore icons and the rooms × chores grid ---------- */
+.cicon { margin-right: 6px; }
+.cicon.big { font-size: 1.35rem; margin: 0; line-height: 1; }
+.hgrid-card { padding: 10px 6px 10px 10px; }
+.hgrid-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.hgrid { border-collapse: separate; border-spacing: 4px; width: 100%; }
+.hgrid th, .hgrid td { padding: 0; }
+.hgrid thead th { vertical-align: bottom; }
+.hgrid th[scope=row] { position: sticky; left: 0; z-index: 1; background: var(--surface); text-align: left; }
+.card button.hhead, button.hhead { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 100%; min-width: 50px;
+  background: none; border: 0; padding: 2px; box-shadow: none; color: var(--muted); font: inherit; cursor: pointer; }
+.hhead small { font-size: .62rem; font-weight: 700; line-height: 1.1; text-align: center; max-width: 58px; overflow-wrap: anywhere; }
+.card button.hroom, button.hroom { background: none; border: 0; padding: 4px 6px 4px 0; box-shadow: none; font: inherit; font-weight: 800;
+  font-size: .85rem; color: var(--ink); text-align: left; cursor: pointer; max-width: 108px; line-height: 1.15; }
+.card button.hcell, button.hcell { width: 100%; min-width: 50px; height: 44px; border-radius: 12px; border: 1px dashed var(--leaf-line);
+  background: none; box-shadow: none; padding: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  font: inherit; color: var(--muted); cursor: pointer; }
+.card button.hcell.on, button.hcell.on { border: 0; background: var(--ok-soft); color: var(--ok); }
+.hcell b { font-size: .85rem; }
+.hcell small { font-size: .62rem; }
+.hcell span { opacity: .45; }

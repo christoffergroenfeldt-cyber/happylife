@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '37'; // keep in step with CACHE in sw.js
+const APP_VERSION = '38'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -1498,7 +1498,7 @@ function houseRow(task, st, withPlace = false) {
     <details class="row hrow compact ${st.done ? 'is-done' : ''} ${st.took && !st.done ? 'is-mine' : ''}">
       <summary>
         <div class="body">
-          <div class="ttl">${where}${esc(chore?.name || task.title)}</div>
+          <div class="ttl"><span class="cicon" aria-hidden="true">${choreIcon(chore?.name || task.title)}</span>${where}${esc(chore?.name || task.title)}</div>
           <div class="meta one">${meta.map(esc).join(' · ')}</div>
         </div>
         ${quick}
@@ -1511,6 +1511,20 @@ function houseRow(task, st, withPlace = false) {
       </div>
     </details>`;
 }
+
+// An icon for a chore type, guessed from its name (Danish, English, French)
+const CHORE_ICONS = [
+  [/støvsug|vacuum|aspir/i, '🧹'], [/gulv|floor|sol\b|serpill/i, '🪣'], [/støv|dust|poussi/i, '🪶'],
+  [/plante|blomst|plant|fleur/i, '🪴'], [/ryd|tidy|rang/i, '🧺'], [/vask(?!e)|tøj|laundry|linge|lessive/i, '👕'],
+  [/seng|bed|lit\b/i, '🛏️'], [/vindue|window|fenêtre|vitre/i, '🪟'], [/toilet|bad|bath|wc|salle de bain/i, '🚿'],
+  [/skrald|affald|trash|bin|poubelle/i, '🗑️'], [/opvask|dishwasher|vaisselle/i, '🍽️'], [/kattebakke|litter|litière/i, '🐈'],
+  [/kat|cat|chat|hund|dog|chien/i, '🐾'], [/vand\b|water|eau/i, '💧'], [/bord|table/i, '🍴'], [/mad|cook|dinner|repas|cuisin/i, '🍳'],
+  [/græs|lawn|gazon|pelouse/i, '🌱'], [/blade|leaves|feuilles/i, '🍂'], [/ukrudt|weed|mauvaise/i, '🌿'],
+  [/olie|oil|huile/i, '🛢️'], [/rens|clean|nettoy/i, '🧽'], [/sne|snow|neige/i, '❄️'], [/bil|car\b|voiture/i, '🚗'],
+];
+const choreIcon = (name) => (CHORE_ICONS.find(([re]) => re.test(name || '')) || [null, '✨'])[1];
+// "1d", "7d" … for the small cells of the house overview
+const recShort = (task) => (task.recurrence === 'custom' ? `${task.interval_days}d` : t('recShort.' + task.recurrence));
 
 // House zones: daily chores (no room), indoor rooms, outdoor areas
 const ZONES = ['daily', 'in', 'out'];
@@ -1564,14 +1578,22 @@ function houseSetup() {
         ${places.length && chores.length ? `<div class="hchips">${places.flatMap((p) => chores.map((c) => chip(p, c))).join('')}</div>` : ''}
         <h3 class="sub">${esc(t('house.choreTypes'))}</h3>${types}</div>`;
     }
+    // One grid: a row per room, a column per chore type (with its icon); tap a
+    // cell to set how often, an empty cell means not in that room
+    const cell = (p, c) => {
+      const tk = houseTask(p.id, c.id);
+      return `<td><button class="hcell ${tk ? 'on' : ''}" data-act="setChore" data-id="${p.id}|${c.id}"
+        aria-label="${esc(`${p.name}: ${c.name}${tk ? ` – ${recLabel(tk)}` : ''}`)}">${tk ? `<b>${esc(recShort(tk))}</b>${tk.need > 1 ? `<small>${tk.need}👤</small>` : ''}` : '<span>＋</span>'}</button></td>`;
+    };
+    const grid = chores.length && places.length ? `<div class="hgrid-wrap"><table class="hgrid">
+        <thead><tr><th></th>${chores.map((c) => `<th><button class="hhead" data-act="editChoreType" data-id="${c.id}">
+          <span class="cicon big" aria-hidden="true">${choreIcon(c.name)}</span><small>${esc(c.name)}</small></button></th>`).join('')}</tr></thead>
+        <tbody>${places.map((p) => `<tr><th scope="row"><button class="hroom" data-act="editPlace" data-id="${p.id}">${esc(p.name)}</button></th>
+          ${chores.map((c) => cell(p, c)).join('')}</tr>`).join('')}</tbody></table></div>` : '';
     return `${head}
+      ${grid ? `<div class="card hgrid-card">${grid}<p class="hint">${esc(t('house.gridHelp'))}</p></div>` : ''}
       <div class="card"><h3>${esc(t('house.choreTypes'))}</h3>${types}</div>
-      ${places.map((p) => `
-        <div class="card place">
-          <div class="plan-head"><h3>${esc(p.name)}</h3>
-            <button class="icon" data-act="editPlace" data-id="${p.id}" aria-label="${t('edit')}">✎</button></div>
-          <div class="hchips">${chores.map((c) => chip(p, c)).join('') || `<span class="hint">${esc(t('house.noTypes'))}</span>`}</div>
-        </div>`).join('')}
+      ${!chores.length ? `<p class="hint">${esc(t('house.noTypes'))}</p>` : ''}
       <button class="add-place" data-act="addPlace" data-id="${zone}">＋ ${t('house.addPlace')}</button>`;
   };
   // One section at a time, picked at the top, so the list stays short
