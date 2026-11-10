@@ -5,14 +5,14 @@ import { t, setLang, getLang, LANGS, IDEAS, EVENT_TASKS, PACK_IDEAS } from './i1
 import { CUISINES, CATALOG, NEARBY, onlineLinks, MAP_QUERY } from './catalog.js';
 import { geocode, fetchNearby } from './places.js';
 import { AGES, ROUTINES, ROUTINE_REC, ROUTINE_TIME, TEMPLATES } from './templates.js';
-import { todayISO, daysBetween, addDays, trackerStatus, eventStatus, periodKey, periodEnd, eventOccurrence, fmtDate, nextWeekly, isoDow } from './dates.js';
+import { todayISO, daysBetween, addDays, trackerStatus, eventStatus, periodKey, periodEnd, eventOccurrence, fmtDate, nextWeekly, isoDow, weekStart } from './dates.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '26'; // keep in step with CACHE in sw.js
+const APP_VERSION = '27'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -48,6 +48,7 @@ const S = {
   places: [], chores: [], houseMode: 'todo', setupZone: 'daily', momentTab: 'family',
   find: null, nearby: null, nearbyMeta: null, findItems: [],
   packs: [], packDone: [], todayDay: null,
+  fdReady: false, fdOrder: [], fdIdeas: [], fdWeeks: [],
   tab: 'home', authStep: 'email', authEmail: '', setupMode: pendingInvite() ? 'join' : 'create', ideaShift: {}, pushOn: false,
 };
 
@@ -131,6 +132,14 @@ async function loadAll() {
   // Idea lists (only rows for my roles come back; a missing table just means none)
   const { data: sugg } = await sb.from('suggestions').select('*');
   S.suggestions = sugg || [];
+  // Family day (a missing table just means an older database)
+  const [fd, fdIdeas, fdWeeks] = await Promise.all([
+    sb.from('famday').select('*').maybeSingle(),
+    sb.from('famday_ideas').select('*'),
+    sb.from('famday_weeks').select('*').gte('week_start', isoMinus(200)),
+  ]);
+  S.fdReady = !fd.error && !fdIdeas.error;
+  Object.assign(S, { fdOrder: fd.data?.turn_order || [], fdIdeas: fdIdeas.data || [], fdWeeks: fdWeeks.data || [] });
   if (isParent()) {
     const td = today();
     const [sync, calendars, inbox, evSources] = await Promise.all([
@@ -495,6 +504,7 @@ function viewHome() {
   return `
     <p class="hello">${esc(t('hello', { name: S.me.display_name }))}</p>
     ${pointsCard()}
+    ${famdayCard(true)}
     ${free.length ? `<h2>${esc(t('freeTasks'))}</h2>
       <div class="list">${free.slice(0, FIRST).map(row).join('')}</div>
       ${free.length > FIRST ? `<details class="more"><summary>${esc(t('showAll'))} (${free.length})</summary>
@@ -520,7 +530,7 @@ const KID_TYPES = ['school', 'sport', 'show'];
 const AHEAD = 30;                         // days of "coming up"
 const LOCALE = () => ({ da: 'da-DK', en: 'en-GB', fr: 'fr-FR' }[getLang()] || 'da-DK');
 
-const wifeMember = () => S.members.find((m) => m.roles.includes('wife') && m.user_id !== uid());
+const wifeMember = () => S.members.find((m) => m.roles.includes('wife'));
 const isWifeTag = (p) => p === WIFE || (!!wifeMember() && p === wifeMember().display_name);
 const isMeTag = (p) => p === ME || p === S.me.display_name;
 const personLabel = (p) => (p === WIFE ? wifeMember()?.display_name || t('td.myWife')
@@ -651,6 +661,7 @@ function viewToday() {
     </div>`;
 
   // 2. What happens that day
+  const fdRow = S.fdWeeks.find((w) => w.on_date === d && w.title && !w.cancelled);
   const program = S.events.filter((ev) => occursOn(ev, d))
     .sort((a, b) => (timeOf(a) || '00').localeCompare(timeOf(b) || '00'));
 
@@ -666,9 +677,11 @@ function viewToday() {
   const special = comingUp(d, (ev) => ['birthday', 'anniversary'].includes(ev.type) && ev.yearly && !shown.has(ev.id));
   const anyTags = S.events.some((ev) => (ev.people || []).length);
 
-  return `${head}${bag}
+  return `${head}${bag}${famdayCard(true)}
     <h2>📅 ${esc(t(isToday ? 'td.program' : 'td.programTomorrow'))}</h2>
-    ${program.length ? `<div class="list">${program.map((ev) => dayEventRow(ev, d, false)).join('')}</div>` : `<p class="empty">${esc(t('td.noProgram'))}</p>`}
+    ${fdRow ? `<div class="list fd-today"><div class="row dayev" data-act="fdPick" data-id="${fdRow.week_start}"><div class="when time">${fdRow.at_time ? `<b>${esc(fdRow.at_time)}</b>` : `<small>${esc(t('td.allDay'))}</small>`}</div>
+      <div class="body"><div class="ttl">${esc(fdRow.emoji || '🎉')} ${esc(t('fd.title'))}: ${esc(fdRow.title)}</div><div class="meta">${esc(t('fd.chosenBy', { name: personLabel(fdRow.chooser) }))}</div></div></div></div>` : ''}
+    ${program.length ? `<div class="list">${program.map((ev) => dayEventRow(ev, d, false)).join('')}</div>` : fdRow ? '' : `<p class="empty">${esc(t('td.noProgram'))}</p>`}
     ${isToday ? `<h2>✅ ${esc(t('myToday'))}</h2>${mine.length
       ? `<div class="list">${mine.map(({ task, st }) => (isHouse(task) ? houseRow(task, st, true) : taskRow(task, st))).join('')}</div>`
       : `<p class="empty">${esc(t('nothingToday'))}</p>`}` : ''}
@@ -773,6 +786,219 @@ function calPeopleForm(cal) {
   form.onsubmit = async (e) => {
     e.preventDefault();
     await run(sb.rpc('set_calendar_people', { p_id: cal.id, p_people: pickedPeople(form, 'people') }));
+    closeDialog(); await refresh();
+  };
+}
+
+// ------------------------------------------------------------ family day (Familiedag)
+// One outing a week, on a day picked each week. Family members take turns
+// choosing what to do. Rotation moves on after a week that actually had a
+// family day, so a skipped or cancelled week doesn't use up anyone's turn.
+
+const FD_TIME = '11:00';
+const fdOrder = () => S.fdOrder || [];
+const fdWeek = (ws) => S.fdWeeks.find((w) => w.week_start === ws) || null;
+
+// Whose turn it is in the week starting ws
+function fdChooser(ws) {
+  const row = fdWeek(ws);
+  if (row) return row.chooser;
+  const order = fdOrder();
+  if (!order.length) return null;
+  const prev = S.fdWeeks.filter((w) => w.week_start < ws && w.title && !w.cancelled)
+    .sort((a, b) => b.week_start.localeCompare(a.week_start))[0];
+  if (!prev) return order[0];
+  const i = order.indexOf(prev.chooser);
+  return order[i < 0 ? 0 : (i + 1) % order.length];
+}
+const fdNext = (name) => { const o = fdOrder(); const i = o.indexOf(name); return o.length ? o[(i + 1) % o.length] : name; };
+
+// The week the card is about: this week, or next week once this week's day is over
+function fdTarget() {
+  const td = today();
+  const ws = weekStart(td);
+  const row = fdWeek(ws);
+  if (row && !row.cancelled && row.title && row.on_date && row.on_date < td) return addDays(ws, 7);
+  return ws;
+}
+
+const fdWhen = (w) => `${cap(fmtDay(w.on_date, { weekday: 'long', day: 'numeric', month: 'short' }))}${w.at_time ? ` ${t('td.at')} ${w.at_time}` : ''}`;
+
+// The card on Home, Today and Moments. nudgeOnly: show "choose" only from Thursday, or when planned
+function famdayCard(nudgeOnly = false) {
+  if (!S.fdReady) return '';
+  const td = today();
+  const ws = fdTarget();
+  const row = fdWeek(ws);
+  const who = fdChooser(ws);
+  if (!who) return nudgeOnly ? '' : `<div class="card famday"><h3>🎲 ${esc(t('fd.title'))}</h3>
+    <p class="meta">${esc(t('fd.noOrder'))}</p>${isParent() ? `<div class="acts"><button class="small primary" data-act="fdSetup">⚙️ ${t('fd.setup')}</button></div>` : ''}</div>`;
+  const nextWeek = ws > weekStart(td);
+  if (row?.cancelled) {
+    if (nudgeOnly) return '';
+    return `<div class="card famday"><h3>🎲 ${esc(t('fd.title'))}</h3><p class="meta">${esc(t('fd.cancelledWeek'))}</p>
+      <div class="acts"><button class="small" data-act="fdUncancel" data-id="${ws}">${t('fd.undoCancel')}</button></div></div>`;
+  }
+  if (row?.title) {
+    const soon = row.on_date ? daysBetween(td, row.on_date) : null;
+    if (nudgeOnly && (soon == null || soon > 7)) return '';
+    return `<div class="card famday planned">
+      <div class="fd-head"><h3>🎉 ${esc(t('fd.title'))}</h3>${soon === 0 ? `<span class="chip yes">${esc(t('isToday'))}</span>` : soon > 0 ? `<span class="chip">${esc(t('inDays', soon))}</span>` : ''}</div>
+      <p class="fd-what">${esc(row.emoji || '✨')} ${esc(row.title)}</p>
+      <p class="meta">${row.on_date ? esc(fdWhen(row)) + ' · ' : ''}${esc(t('fd.chosenBy', { name: personLabel(row.chooser) }))}</p>
+      ${row.note ? `<p class="notes">${esc(row.note)}</p>` : ''}
+      <div class="acts"><button class="small" data-act="fdPick" data-id="${ws}">✎ ${t('edit')}</button></div></div>`;
+  }
+  if (nudgeOnly && !nextWeek && isoDow(td) < 4) return '';
+  if (nudgeOnly && nextWeek) return '';
+  return `<div class="card famday">
+    <div class="fd-head"><h3>🎲 ${esc(t('fd.title'))}${nextWeek ? ` · ${esc(t('fd.nextWeek'))}` : ''}</h3>
+      ${isParent() && !nudgeOnly ? `<button class="icon" data-act="fdSetup" aria-label="${esc(t('fd.setup'))}">⚙️</button>` : ''}</div>
+    <p class="fd-turn">${t('fd.turn', { name: `<b>${esc(personLabel(who))}</b>` })}</p>
+    <div class="acts"><button class="small primary" data-act="fdPick" data-id="${ws}">🎯 ${t('fd.choose')}</button>
+      <button class="small" data-act="fdPass" data-id="${ws}">⏭ ${t('fd.pass', { name: personLabel(fdNext(who)) })}</button>
+      ${nudgeOnly ? '' : `<button class="small" data-act="fdCancel" data-id="${ws}">${t('fd.cancel')}</button>`}</div></div>`;
+}
+
+// When was an idea last done (from earlier weeks)
+function fdLast(idea) {
+  const td = today();
+  const w = S.fdWeeks.filter((x) => x.idea_id === idea.id && x.on_date && x.on_date < td && !x.cancelled)
+    .sort((a, b) => b.on_date.localeCompare(a.on_date))[0];
+  if (!w) return t('fd.never');
+  const n = Math.round(daysBetween(w.on_date, td) / 7);
+  return n < 1 ? t('fd.lastDays', daysBetween(w.on_date, td)) : t('fd.lastWeeks', n);
+}
+
+async function fdSave(ws, fields) {
+  const row = fdWeek(ws);
+  const base = { week_start: ws, chooser: row?.chooser || fdChooser(ws), updated_at: new Date().toISOString() };
+  await run(sb.from('famday_weeks').upsert({ ...base, ...fields }, { onConflict: 'family_id,week_start' }));
+}
+
+// Choose (or change) the activity, day and time for the week starting ws
+function fdPickForm(ws) {
+  const row = fdWeek(ws) || {};
+  const who = fdChooser(ws);
+  const td = today();
+  const sunday = addDays(ws, 6);
+  // default: Saturday of that week, else Sunday, else today
+  const day0 = row.on_date || [addDays(ws, 5), sunday].find((x) => x >= td) || td;
+  const ideas = S.fdIdeas.slice().sort((a, b) => a.title.localeCompare(b.title));
+  const order = [...new Set([...fdOrder(), who])];
+  openDialog(`
+    <form id="fdForm" class="form">
+      <h2>🎯 ${esc(t('fd.title'))}</h2>
+      <label>${t('fd.chooser')}<select name="chooser">${order.map((p) =>
+        `<option value="${esc(p)}" ${p === who ? 'selected' : ''}>${esc(personLabel(p))}</option>`).join('')}</select></label>
+      <div class="seg fd-filter">${['all', 'out', 'in', 'short'].map((f, i) =>
+        `<button type="button" data-f="${f}" class="${i ? '' : 'on'}">${esc(t('fd.f_' + f))}</button>`).join('')}</div>
+      <div class="fd-ideas">${ideas.map((x) => `
+        <label class="fd-idea" data-w="${x.weather}" data-long="${x.long ? 1 : 0}">
+          <input type="radio" name="idea" value="${x.id}" ${row.idea_id === x.id ? 'checked' : ''}>
+          <span class="em">${esc(x.emoji)}</span><span class="tx"><b>${esc(x.title)}</b>
+          <small>${esc([x.weather === 'out' ? t('fd.outdoor') : x.weather === 'in' ? t('fd.indoor') : t('fd.anyWeather'), x.long ? t('fd.long') : t('fd.short'), fdLast(x)].join(' · '))}</small></span></label>`).join('')}
+        <label class="fd-idea" data-w="any" data-long="0"><input type="radio" name="idea" value="" ${row.title && !row.idea_id ? 'checked' : ''}>
+          <span class="em">✏️</span><span class="tx"><b>${esc(t('fd.other'))}</b></span></label>
+      </div>
+      <div class="fd-own" hidden>
+        <label>${t('fd.what')}<input name="own" maxlength="80" value="${esc(!row.idea_id && row.title ? row.title : '')}"></label>
+        <label class="check"><input type="checkbox" name="keep" checked><span>${esc(t('fd.keepIdea'))}</span></label>
+      </div>
+      <div class="two"><label>${t('td.date')}<input name="on_date" type="date" value="${esc(day0)}" min="${ws > td ? ws : td}" max="${sunday}" required></label>
+        <label>${t('td.time')}<input name="at_time" type="time" value="${esc(row.at_time || FD_TIME)}"></label></div>
+      <label>${t('notes')}<input name="note" maxlength="300" value="${esc(row.note || '')}" placeholder="${esc(t('fd.notePh'))}"></label>
+      <div class="btns">
+        ${row.title ? `<button type="button" class="danger" data-act="fdClear" data-id="${ws}">${t('fd.unchoose')}</button>` : ''}
+        <span class="grow"></span>
+        <button type="button" data-act="close">${t('cancel')}</button>
+        <button class="primary" type="submit">${t('save')}</button>
+      </div>
+    </form>`);
+  const form = document.getElementById('fdForm');
+  const own = form.querySelector('.fd-own');
+  const sync = () => { own.hidden = form.elements.idea.value !== '' || !form.querySelector('input[name=idea]:checked'); };
+  form.querySelectorAll('input[name=idea]').forEach((r) => { r.onchange = sync; }); sync();
+  form.querySelectorAll('.fd-filter button').forEach((b) => { b.onclick = () => {
+    form.querySelectorAll('.fd-filter button').forEach((x) => x.classList.toggle('on', x === b));
+    const f = b.dataset.f;
+    form.querySelectorAll('.fd-idea').forEach((el) => {
+      el.hidden = !(f === 'all' || (f === 'short' ? el.dataset.long === '0' : el.dataset.w === f || el.dataset.w === 'any'));
+    });
+  }; });
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(form);
+    if (!form.querySelector('input[name=idea]:checked')) return toast(t('fd.pickOne'), true);
+    let idea = byId(S.fdIdeas, f.get('idea'));
+    if (!idea) {
+      const title = String(f.get('own') || '').trim();
+      if (!title) return toast(t('needTitle'), true);
+      if (f.get('keep') === 'on') [idea] = await run(sb.from('famday_ideas').insert({ title, emoji: '✨' }).select());
+      else idea = { id: null, title, emoji: '✨' };
+    }
+    await fdSave(ws, { chooser: f.get('chooser'), idea_id: idea.id, title: idea.title, emoji: idea.emoji,
+      on_date: f.get('on_date'), at_time: f.get('at_time') || null, note: String(f.get('note') || '').trim() || null, cancelled: false });
+    closeDialog(); toast('🎉'); await refresh();
+  };
+}
+
+// Parents: turn order, ideas and the last weeks
+function fdSetupForm() {
+  const order = fdOrder().slice();
+  const ideas = S.fdIdeas.slice().sort((a, b) => a.title.localeCompare(b.title));
+  const hist = S.fdWeeks.filter((w) => w.title && !w.cancelled && w.on_date && w.on_date < today())
+    .sort((a, b) => b.on_date.localeCompare(a.on_date)).slice(0, 10);
+  const candidates = [...new Set([...knownPeople(), WIFE, S.me.display_name])].filter((p) => !order.includes(p));
+  openDialog(`
+    <form id="fdSetup" class="form">
+      <h2>⚙️ ${esc(t('fd.title'))}</h2>
+      <fieldset><legend>${t('fd.order')}</legend>
+        <ol class="fd-order">${order.map((p, i) => `<li data-p="${esc(p)}"><span>${esc(personLabel(p))}</span>
+          <button type="button" class="icon" data-mv="-1" aria-label="↑">↑</button><button type="button" class="icon" data-mv="1" aria-label="↓">↓</button>
+          <button type="button" class="icon" data-rm aria-label="${esc(t('delete'))}">✕</button></li>`).join('')}</ol>
+        <div class="copyrow"><input id="fdAdd" list="fdCand" placeholder="${esc(t('td.otherName'))}" maxlength="40">
+          <datalist id="fdCand">${candidates.map((p) => `<option value="${esc(personLabel(p))}">`).join('')}</datalist>
+          <button type="button" class="small" id="fdAddBtn">＋</button></div>
+        <p class="hint">${esc(t('fd.orderHelp'))}</p>
+      </fieldset>
+      <fieldset><legend>${t('fd.ideas')} (${ideas.length})</legend>
+        <div class="fd-idea-list">${ideas.map((x) => `<div class="fd-irow"><span>${esc(x.emoji)} ${esc(x.title)}</span>
+          <button type="button" class="icon" data-act="fdDelIdea" data-id="${x.id}" aria-label="${esc(t('delete'))}">✕</button></div>`).join('')}</div>
+        <div class="fd-newidea"><input id="fdIdeaEmoji" maxlength="4" placeholder="✨" class="em">
+          <input id="fdIdeaTitle" maxlength="80" placeholder="${esc(t('fd.newIdea'))}">
+          <select id="fdIdeaW"><option value="any">${esc(t('fd.anyWeather'))}</option><option value="out">${esc(t('fd.outdoor'))}</option><option value="in">${esc(t('fd.indoor'))}</option></select>
+          <label class="check"><input type="checkbox" id="fdIdeaLong"><span>${esc(t('fd.long'))}</span></label>
+          <button type="button" class="small" data-act="fdAddIdea">＋ ${t('fd.addIdea')}</button></div>
+      </fieldset>
+      ${hist.length ? `<details><summary>${esc(t('fd.history'))}</summary><ul class="hist">${hist.map((w) =>
+        `<li>${esc(fmtDate(w.on_date, getLang()))}: ${esc(w.emoji || '')} ${esc(w.title)} – ${esc(personLabel(w.chooser))}</li>`).join('')}</ul></details>` : ''}
+      <div class="btns"><span class="grow"></span>
+        <button type="button" data-act="close">${t('cancel')}</button>
+        <button class="primary" type="submit">${t('save')}</button></div>
+    </form>`);
+  const form = document.getElementById('fdSetup');
+  const list = form.querySelector('.fd-order');
+  // names typed as "Min kone" map back to the wife tag
+  const fromLabel = (v) => (v === personLabel(WIFE) ? WIFE : v);
+  list.onclick = (e) => {
+    const li = e.target.closest('li'); if (!li) return;
+    if (e.target.dataset.rm !== undefined) li.remove();
+    const mv = Number(e.target.dataset.mv || 0);
+    if (mv < 0 && li.previousElementSibling) list.insertBefore(li, li.previousElementSibling);
+    if (mv > 0 && li.nextElementSibling) list.insertBefore(li.nextElementSibling, li);
+  };
+  form.querySelector('#fdAddBtn').onclick = () => {
+    const inp = form.querySelector('#fdAdd'); const v = fromLabel(inp.value.trim());
+    if (!v || [...list.children].some((li) => li.dataset.p === v)) return;
+    const li = document.createElement('li'); li.dataset.p = v;
+    li.innerHTML = `<span>${esc(personLabel(v))}</span><button type="button" class="icon" data-mv="-1">↑</button><button type="button" class="icon" data-mv="1">↓</button><button type="button" class="icon" data-rm>✕</button>`;
+    list.appendChild(li); inp.value = '';
+  };
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const turn = [...list.children].map((li) => li.dataset.p);
+    await run(sb.from('famday').upsert({ family_id: S.family.id, turn_order: turn }));
     closeDialog(); await refresh();
   };
 }
@@ -1410,7 +1636,7 @@ function viewMoments() {
     ? `<button class="primary" data-act="newFamilyMoment">＋ ${t('newFamilyMoment')}</button>`
     : `<button class="primary" data-act="newMoment">＋ ${t('newMoment')}</button>`;
   return `${pick}<div class="toolbar">${newBtn}<button data-act="openFind" data-id="">🔎 ${t('findIdeas')}</button></div>
-    ${tab === 'family' ? fam : own}
+    ${tab === 'family' ? famdayCard() + fam : own}
     ${!fam && !own ? `<p class="empty">${esc(t('noMoments'))}</p>` : ''}
     ${ideasSection()}`;
 }
@@ -2316,6 +2542,22 @@ const ACTIONS = {
     await refresh();
   },
   calPeople: (id) => calPeopleForm(byId(S.calendars, id)),
+  fdPick: (ws) => fdPickForm(ws),
+  fdSetup: () => fdSetupForm(),
+  fdPass: async (ws) => { await fdSave(ws, { chooser: fdNext(fdChooser(ws)) }); await refresh(); },
+  fdCancel: async (ws) => { if (!confirm(t('fd.cancelConfirm'))) return; await fdSave(ws, { cancelled: true }); await refresh(); },
+  fdUncancel: async (ws) => { await fdSave(ws, { cancelled: false }); await refresh(); },
+  fdClear: async (ws) => { await fdSave(ws, { title: null, idea_id: null, emoji: null, on_date: null, at_time: null, note: null });
+    closeDialog(); await refresh(); },
+  fdAddIdea: async () => {
+    const title = document.getElementById('fdIdeaTitle')?.value.trim();
+    if (!title) return toast(t('needTitle'), true);
+    await run(sb.from('famday_ideas').insert({ title, emoji: document.getElementById('fdIdeaEmoji').value.trim() || '✨',
+      weather: document.getElementById('fdIdeaW').value, long: document.getElementById('fdIdeaLong').checked }));
+    await refresh(); fdSetupForm();
+  },
+  fdDelIdea: async (id) => { if (!confirm(t('confirmDelete'))) return;
+    await run(sb.from('famday_ideas').delete().eq('id', id)); await refresh(); fdSetupForm(); },
   addPerson: (name) => {
     const box = document.querySelector(`[data-people="${name}"]`);
     const inp = box?.querySelector('input.newperson');

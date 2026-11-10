@@ -1536,3 +1536,72 @@ begin
 end $$;
 revoke execute on function set_calendar_people(uuid, text[]) from public, anon;
 grant execute on function set_calendar_people(uuid, text[]) to authenticated;
+
+-- ================================================================ family day (Familiedag)
+-- A weekly family outing on a day chosen each week. Family members take turns
+-- choosing (turn_order holds names, e.g. 'Carl', or '@wife'); the one whose turn
+-- it is picks an idea, a day and a time. A week without an actual day (skipped)
+-- doesn't use up anyone's turn.
+create table if not exists famday (
+  family_id  uuid primary key default my_family() references families on delete cascade,
+  turn_order text[] not null default '{}' check (cardinality(turn_order) <= 12)
+);
+alter table famday enable row level security;
+drop policy if exists fd_select on famday;
+create policy fd_select on famday for select using (family_id = my_family());
+drop policy if exists fd_insert on famday;
+create policy fd_insert on famday for insert with check (family_id = my_family() and i_am_parent());
+drop policy if exists fd_update on famday;
+create policy fd_update on famday for update using (family_id = my_family() and i_am_parent())
+  with check (family_id = my_family());
+
+create table if not exists famday_ideas (
+  id         uuid primary key default gen_random_uuid(),
+  family_id  uuid not null default my_family() references families on delete cascade,
+  emoji      text not null default '✨' check (length(emoji) <= 16),
+  title      text not null check (length(title) between 1 and 80),
+  weather    text not null default 'any' check (weather in ('out','in','any')),
+  long       boolean not null default false,          -- half a day or more
+  created_by uuid default auth.uid() references auth.users on delete set null,
+  created_at timestamptz not null default now()
+);
+create index if not exists famday_ideas_family on famday_ideas(family_id);
+alter table famday_ideas enable row level security;
+drop policy if exists fi_select on famday_ideas;
+create policy fi_select on famday_ideas for select using (family_id = my_family());
+drop policy if exists fi_insert on famday_ideas;
+create policy fi_insert on famday_ideas for insert with check (family_id = my_family());
+drop policy if exists fi_update on famday_ideas;
+create policy fi_update on famday_ideas for update
+  using (family_id = my_family() and (i_am_parent() or created_by = auth.uid())) with check (family_id = my_family());
+drop policy if exists fi_delete on famday_ideas;
+create policy fi_delete on famday_ideas for delete
+  using (family_id = my_family() and (i_am_parent() or created_by = auth.uid()));
+
+create table if not exists famday_weeks (
+  id         uuid primary key default gen_random_uuid(),
+  family_id  uuid not null default my_family() references families on delete cascade,
+  week_start date not null check (extract(isodow from week_start) = 1),   -- Monday
+  chooser    text not null check (length(chooser) between 1 and 40),
+  idea_id    uuid references famday_ideas on delete set null,
+  emoji      text check (length(emoji) <= 16),
+  title      text check (length(title) between 1 and 120),            -- null = not chosen yet
+  on_date    date,
+  at_time    text check (at_time is null or at_time ~ '^\d{2}:\d{2}$'),
+  note       text check (length(note) <= 300),
+  cancelled  boolean not null default false,
+  created_by uuid default auth.uid() references auth.users on delete set null,
+  updated_at timestamptz not null default now(),
+  unique (family_id, week_start)
+);
+alter table famday_weeks enable row level security;
+drop policy if exists fw_select on famday_weeks;
+create policy fw_select on famday_weeks for select using (family_id = my_family());
+drop policy if exists fw_insert on famday_weeks;
+create policy fw_insert on famday_weeks for insert with check (family_id = my_family());
+drop policy if exists fw_update on famday_weeks;
+create policy fw_update on famday_weeks for update using (family_id = my_family()) with check (family_id = my_family());
+drop policy if exists fw_delete on famday_weeks;
+create policy fw_delete on famday_weeks for delete using (family_id = my_family() and i_am_parent());
+grant select, insert, update on famday to authenticated;
+grant select, insert, update, delete on famday_ideas, famday_weeks to authenticated;

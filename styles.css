@@ -466,3 +466,28 @@ a.book-link.map { border-style: dashed; }
 .cal-row .cal-name > :first-child { overflow: hidden; text-overflow: ellipsis; }
 button.cal-who { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   background: none; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: .8rem; font-weight: 700; color: var(--muted); }
+
+/* ---------- family day ---------- */
+.card.famday { background: color-mix(in srgb, var(--sun3) 30%, var(--surface)); margin-top: 14px; }
+.card.famday.planned { background: color-mix(in srgb, var(--sun3) 50%, var(--surface)); }
+.fd-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.famday h3 { font-size: 1.05rem; }
+.fd-turn { margin: 6px 0 2px; font-size: 1.02rem; }
+.fd-what { margin: 8px 0 2px; font-size: 1.1rem; font-weight: 800; }
+.famday .acts { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+.fd-filter { justify-content: flex-start; }
+.fd-ideas { display: flex; flex-direction: column; gap: 6px; max-height: 42vh; overflow-y: auto; }
+.fd-idea { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; }
+.fd-idea input { flex: none; }
+.fd-idea .em { font-size: 1.4rem; flex: none; }
+.fd-idea .tx { display: flex; flex-direction: column; min-width: 0; }
+.fd-idea .tx small { color: var(--muted); font-size: .8rem; }
+.fd-idea:has(input:checked) { border-color: var(--head); background: color-mix(in srgb, var(--sun2) 50%, var(--surface)); }
+.fd-order { margin: 0 0 8px; padding-left: 22px; }
+.fd-order li { display: flex; align-items: center; gap: 2px; padding: 2px 0; }
+.fd-order li span { flex: 1; font-weight: 700; }
+.fd-irow { display: flex; align-items: center; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid var(--line); }
+.fd-idea-list { max-height: 30vh; overflow-y: auto; margin-bottom: 10px; }
+.fd-newidea { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.fd-newidea .em { width: 3.2em; }
+.fd-newidea #fdIdeaTitle { flex: 1 1 60%; }
