@@ -19,6 +19,7 @@
   --sun1: #fff3c4; --sun2: #ffe08a; --sun3: #ffc24d;
   --sunrise: linear-gradient(135deg, #ffd66b, #ffb38a); --sunrise-ink: #5a2310;
   --leaf: #eff8e4; --leaf-line: #8fcb63;
+  --sky: #eaf5ff;
   --hill1: #b9e28f; --hill2: #8fcb63; --tree1: #4e9f37; --tree2: #6bb84a; --trunk: #8a5a35;
   --nav: #ffffff; --nav-line: #6bb84a;
   --radius: 20px;
@@ -37,6 +38,7 @@
     --sun1: #232f20; --sun2: #3a3a22; --sun3: #5a4a20;
     --sunrise: linear-gradient(135deg, #5a4520, #5a3524); --sunrise-ink: #ffe2c4;
     --leaf: #24331f; --leaf-line: #4e7a3a;
+    --sky: #172636;
     --hill1: #1d2e1b; --hill2: #223820; --tree1: #2a4a25; --tree2: #305429; --trunk: #3e2d20;
     --nav: #1a271c; --nav-line: #3f6a33;
     --shadow: none; color-scheme: dark;
@@ -46,13 +48,8 @@
 * { box-sizing: border-box; }
 html { background: var(--bg); }
 html, body { margin: 0; color: var(--ink); }
-/* the sun: drawn inside the screen (no sideways scroll), behind everything, scrolls away with the page */
+/* each page has its own drawing at the top (art.js); the front page a rainbow */
 body { position: relative; }
-body::before {
-  content: ''; position: absolute; z-index: -1; pointer-events: none;
-  top: 0; right: 0; width: 230px; height: 210px;
-  background: radial-gradient(circle at 180px 30px, var(--sun3) 0 85px, var(--sun2) 86px 130px, var(--sun1) 131px 180px, transparent 181px);
-}
 body::after {
   content: ''; position: fixed; z-index: -1; pointer-events: none;
   left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 58px); height: 170px;
@@ -530,3 +527,20 @@ button.row.skema-link { width: 100%; text-align: left; align-items: center; curs
 .sk-hide .hchip.hidden-subj { opacity: .55; text-decoration: line-through; }
 .sk-hide .hchip small { opacity: .7; margin-left: 2px; }
 .kind-chips.sk-hide { flex-wrap: wrap; overflow: visible; margin: 8px 0 0; padding: 0; }
+
+/* ---------- page tops with drawings ---------- */
+.top.hero { display: block; min-height: 150px; padding-bottom: 14px; overflow: hidden; }
+.hero-art { position: absolute; right: 6px; bottom: 0; width: 170px; height: 140px; z-index: 0; pointer-events: none; }
+.hero-art svg { display: block; width: 100%; height: 100%; }
+.hero-moments .hero-art { width: 190px; }
+.hero-text { position: relative; z-index: 1; max-width: calc(100% - 180px); display: flex; flex-direction: column; gap: 2px; padding-top: 18px; }
+.hero-text h1 { font-size: 1.8rem; line-height: 1.1; }
+.top.hero .fam { white-space: normal; text-align: left; flex: none; }
+.top.hero .refresh { position: absolute; z-index: 2; top: calc(env(safe-area-inset-top) + 8px); right: 10px;
+  background: color-mix(in srgb, var(--surface) 75%, transparent); border-radius: 50%; }
+.top.hero-home { min-height: 250px; background: var(--sky); border-radius: 0 0 28px 28px; margin-bottom: 8px; }
+.hero-home .hero-art { left: 0; right: 0; top: 0; width: auto; height: auto; }
+.hero-home .hero-text { max-width: 62%; padding-top: 72px; }
+.hero-home .fam { color: var(--muted); font-weight: 700; }
+@media (min-width: 640px) { .hero-home .hero-art { left: 50%; right: auto; width: 640px; transform: translateX(-50%); } }
+@media (prefers-color-scheme: dark) { .hero-art svg { filter: brightness(.72) saturate(.85); } }
