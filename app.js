@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '36'; // keep in step with CACHE in sw.js
+const APP_VERSION = '37'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -853,6 +853,44 @@ function skemaLink(d) {
     <span class="body"><span class="ttl">${esc(t('sk.title'))}</span>
       <span class="meta">${kids.map(({ k, n }) => `<b>${esc(personLabel(k))}</b> ${esc(t('sk.lessons', { n: n.length, t: n[0].start_time || '' }))}`).join(' · ')}</span></span>
     <span class="icon">›</span></button>`;
+}
+
+// Setup: the names used for "who is it about" – rename or remove one everywhere
+function peopleSetupSection() {
+  if (!isParent()) return '';
+  const names = knownPeople().filter((p) => !children().some((c) => c.display_name === p));
+  const joined = children().map((c) => c.display_name).filter((p) => knownPeople().includes(p));
+  const all = [...joined, ...names];
+  if (!all.length) return '';
+  const uses = (p) => S.events.filter((ev) => (ev.people || []).includes(p)).length
+    + (S.calendars || []).filter((c) => (c.people || []).includes(p)).length
+    + S.packs.filter((x) => x.who === p).length;
+  return `<h2>👤 ${esc(t('td.names'))}</h2>
+    <div class="card"><p class="meta">${esc(t('td.namesHelp'))}</p>
+      <div class="kind-chips sk-hide">${all.map((p) => `<button class="hchip" data-act="editPerson" data-id="${esc(p)}">${esc(p)} <small>${uses(p)}</small> ✎</button>`).join('')}</div></div>`;
+}
+
+function personForm(name) {
+  openDialog(`
+    <form id="personForm" class="form">
+      <h2>👤 ${esc(name)}</h2>
+      <label>${t('td.rename')}<input name="name" value="${esc(name)}" maxlength="40" required></label>
+      <p class="hint">${esc(t('td.renameHelp'))}</p>
+      <div class="btns">
+        <button type="button" class="danger" data-act="delPerson" data-id="${esc(name)}">${t('delete')}</button>
+        <span class="grow"></span>
+        <button type="button" data-act="close">${t('cancel')}</button>
+        <button class="primary" type="submit">${t('save')}</button>
+      </div>
+    </form>`);
+  const form = document.getElementById('personForm');
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const nw = form.elements.name.value.trim();
+    if (!nw || nw === name) return closeDialog();
+    await run(sb.rpc('rename_person', { p_old: name, p_new: nw }));
+    closeDialog(); await refresh();
+  };
 }
 
 // Setup: tap a subject to hide or show it on the Skema page (e.g. RESS)
@@ -2391,6 +2429,7 @@ function viewFamily() {
     ${pushSection()}
     ${homeSection()}
     ${calendarSection()}
+    ${peopleSetupSection()}
     ${skemaSetupSection()}
     <h2>${esc(t('language'))}</h2>
     ${langPicker()}
@@ -2664,6 +2703,12 @@ const ACTIONS = {
     S.skemaWeek = weekStart(d || today()); render(); window.scrollTo(0, 0);
   },
   skemaWho: (k) => { S.skemaWho = k; render(); },
+  editPerson: (name) => personForm(name),
+  delPerson: async (name) => {
+    if (!confirm(t('td.delPersonConfirm', { name }))) return;
+    await run(sb.rpc('rename_person', { p_old: name, p_new: null }));
+    closeDialog(); await refresh();
+  },
   skemaHide: async (title) => {
     const key = title.toLowerCase();
     if (S.skemaHidden.includes(key)) await run(sb.from('skema_hidden').delete().eq('family_id', S.family.id).eq('title', key));

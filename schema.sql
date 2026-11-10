@@ -1692,3 +1692,24 @@ create policy sh_insert on skema_hidden for insert with check (family_id = my_fa
 drop policy if exists sh_delete on skema_hidden;
 create policy sh_delete on skema_hidden for delete using (family_id = my_family() and i_am_parent());
 grant select, insert, delete on skema_hidden to authenticated;
+
+-- Names used for "who is it about" (events, phone calendars, packing list,
+-- family-day turns): rename one everywhere, or remove it (p_new null).
+create or replace function rename_person(p_old text, p_new text)
+returns void language plpgsql security definer set search_path = public as $$
+declare fam uuid := my_family(); nw text := nullif(left(btrim(coalesce(p_new, '')), 40), '');
+begin
+  if not i_am_parent() then raise exception 'parents only'; end if;
+  if p_old is null or p_old in ('@wife', '@me', '@family') then raise exception 'cannot change this name'; end if;
+  update events set people = array(select distinct x from unnest(array_replace(people, p_old, nw)) x where x is not null)
+   where family_id = fam and p_old = any(people);
+  update user_calendars set people = array(select distinct x from unnest(array_replace(people, p_old, nw)) x where x is not null)
+   where family_id = fam and p_old = any(people);
+  update pack_items set who = nw where family_id = fam and who = p_old;
+  update famday set turn_order = array(select x from unnest(array_replace(turn_order, p_old, nw)) with ordinality u(x, i)
+                                        where x is not null group by x order by min(i))
+   where family_id = fam and p_old = any(turn_order);
+  update famday_weeks set chooser = nw where family_id = fam and chooser = p_old and nw is not null;
+end $$;
+revoke execute on function rename_person(text, text) from public, anon;
+grant execute on function rename_person(text, text) to authenticated;
