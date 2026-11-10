@@ -1,38 +1,44 @@
 :root {
-  /* "Sol på engen" + rose love (mockup R) */
-  --bg: #d9eacb;
-  --surface: #fff8e8;
+  /* "Solopgang i haven" (mockup A2): fresh grass and trees, a rising sun */
+  --bg: #f3f9e8;
+  --surface: #ffffff;
   --ink: #24331c;
-  --head: #2e5022;
+  --head: #2f6b2a;
   --muted: #4f5e45;
-  --line: #ecdfc4;
-  --accent: #3f6b2f;
+  --line: #e0eed0;
+  --accent: #2f7a26;
   --accent-ink: #fff;
-  --accent-soft: #e4efd8;
+  --accent-soft: #eff8e4;
   --gold: #e9864c;
-  --ok: #3f6b2f;
-  --ok-soft: #dcebcd;
+  --ok: #2f7a26;
+  --ok-soft: #ddf2cc;
   --danger: #b8402f;
-  --pill: #fce0cc; --pill-ink: #6a2f0c;
+  --pill: #ffe8cf; --pill-ink: #9a3412;
   --love: #f9d5d8; --love-ink: #3a1420; --love-muted: #7a2a3c; --love-line: #efb4bf;
   --love-bar: #f2b3bd; --love-fill: #d9536a; --love-btn: #b33a55; --love-idea: #fff0f1;
-  --sun1: #e6edb8; --sun2: #fbe7a0; --sun3: #ffcf66;
-  --nav: #f2f8eb; --nav-line: #bfd6a9;
+  --sun1: #fff3c4; --sun2: #ffe08a; --sun3: #ffc24d;
+  --sunrise: linear-gradient(135deg, #ffd66b, #ffb38a); --sunrise-ink: #5a2310;
+  --leaf: #eff8e4; --leaf-line: #8fcb63;
+  --hill1: #b9e28f; --hill2: #8fcb63; --tree1: #4e9f37; --tree2: #6bb84a; --trunk: #8a5a35;
+  --nav: #ffffff; --nav-line: #6bb84a;
   --radius: 20px;
-  --shadow: 0 1px 2px rgba(40, 60, 20, .05), 0 4px 14px rgba(40, 60, 20, .06);
+  --shadow: 0 1px 2px rgba(47, 107, 42, .05), 0 4px 16px rgba(47, 107, 42, .09);
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    /* evening on the meadow */
-    --bg: #18221a; --surface: #233025; --ink: #ecf1e4; --head: #cfe5b8; --muted: #a9b8a0; --line: #34453a;
-    --accent: #8cc06e; --accent-ink: #14200f; --accent-soft: #2c3f2a; --gold: #f0a36f;
-    --ok: #8cc06e; --ok-soft: #26392a; --danger: #f08a7a;
+    /* the garden at dusk */
+    --bg: #152016; --surface: #1f2d21; --ink: #ecf1e4; --head: #b7e09a; --muted: #a9b8a0; --line: #304232;
+    --accent: #7fc25f; --accent-ink: #10200c; --accent-soft: #263a25; --gold: #f0a36f;
+    --ok: #8fd06d; --ok-soft: #24391f; --danger: #f08a7a;
     --pill: #4a3222; --pill-ink: #ffd9bd;
     --love: #3d2329; --love-ink: #fbe3e6; --love-muted: #e5a9b5; --love-line: #6a3a45;
     --love-bar: #5a3039; --love-fill: #ef7f93; --love-btn: #e0657d; --love-idea: #4a2b32;
-    --sun1: #232f20; --sun2: #2e3622; --sun3: #4a4423;
-    --nav: #1f2b21; --nav-line: #34453a;
+    --sun1: #232f20; --sun2: #3a3a22; --sun3: #5a4a20;
+    --sunrise: linear-gradient(135deg, #5a4520, #5a3524); --sunrise-ink: #ffe2c4;
+    --leaf: #24331f; --leaf-line: #4e7a3a;
+    --hill1: #1d2e1b; --hill2: #223820; --tree1: #2a4a25; --tree2: #305429; --trunk: #3e2d20;
+    --nav: #1a271c; --nav-line: #3f6a33;
     --shadow: none; color-scheme: dark;
   }
 }
@@ -46,6 +52,18 @@ body::before {
   content: ''; position: absolute; z-index: -1; pointer-events: none;
   top: 0; right: 0; width: 230px; height: 210px;
   background: radial-gradient(circle at 180px 30px, var(--sun3) 0 85px, var(--sun2) 86px 130px, var(--sun1) 131px 180px, transparent 181px);
+}
+body::after {
+  content: ''; position: fixed; z-index: -1; pointer-events: none;
+  left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 58px); height: 170px;
+  background:
+    radial-gradient(circle at calc(100% - 44px) 46px, var(--tree2) 0 20px, transparent 21px),
+    radial-gradient(circle at calc(100% - 40px) 66px, var(--tree1) 0 28px, transparent 29px),
+    linear-gradient(var(--trunk), var(--trunk)) right 34px top 86px / 12px 40px no-repeat,
+    radial-gradient(circle at 32px 98px, var(--tree2) 0 21px, transparent 22px),
+    linear-gradient(var(--trunk), var(--trunk)) left 27px top 112px / 10px 26px no-repeat,
+    radial-gradient(ellipse 220px 80px at calc(100% - 110px) 100%, var(--hill2) 99%, transparent 100%),
+    radial-gradient(ellipse 200px 70px at 90px 100%, var(--hill1) 99%, transparent 100%);
 }
 body {
   font: 16px/1.45 'Nunito', system-ui, -apple-system, sans-serif;
@@ -72,7 +90,7 @@ button, input, select { font: inherit; color: inherit; }
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
   display: grid; grid-template-columns: repeat(6, 1fr);
   padding: 6px 4px calc(env(safe-area-inset-bottom) + 6px);
-  background: var(--nav); border-top: 1px solid var(--nav-line);
+  background: var(--nav); border-top: 3px solid var(--nav-line);
 }
 .tabs button {
   background: none; border: 0; padding: 4px 0; display: flex; flex-direction: column; align-items: center;
@@ -447,7 +465,8 @@ a.book-link.map { border-style: dashed; }
 .today-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
 .today-head .hello { margin: 0; }
 .today-head .seg { justify-content: flex-end; }
-.card.bag { background: color-mix(in srgb, var(--sun2) 45%, var(--surface)); margin-top: 14px; }
+.card.bag { background: var(--surface); margin-top: 14px; }
+.bag .row.pack { background: var(--leaf); box-shadow: none; }
 .bag-head { display: flex; align-items: center; justify-content: space-between; }
 .bag-head h2 { margin: 0; }
 .bag .subhead { margin: 14px 0 6px; font-size: 1rem; }
@@ -459,7 +478,7 @@ a.book-link.map { border-style: dashed; }
 .row .when b { font-size: 1.15rem; color: var(--head); }
 .row .when small { font-size: .72rem; color: var(--muted); text-transform: uppercase; font-weight: 700; }
 .row .when.time b { font-size: .98rem; }
-.chip.kid { background: color-mix(in srgb, var(--sun3) 55%, var(--surface)); color: var(--ink); font-weight: 700; }
+.chip.kid { background: var(--pill); color: var(--pill-ink); font-weight: 800; }
 .chip.pack { background: var(--sun1); }
 .checks.days { gap: 4px 10px; }
 .cal-row .cal-name { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -468,8 +487,10 @@ button.cal-who { flex: none; max-width: 55%; overflow: hidden; text-overflow: el
   background: none; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: .8rem; font-weight: 700; color: var(--muted); }
 
 /* ---------- family day ---------- */
-.card.famday { background: color-mix(in srgb, var(--sun3) 30%, var(--surface)); margin-top: 14px; }
-.card.famday.planned { background: color-mix(in srgb, var(--sun3) 50%, var(--surface)); }
+.card.famday { background: var(--sunrise); margin-top: 14px; }
+.card.famday.planned { background: var(--sunrise); }
+.card.famday h3, .card.famday .fd-what { color: var(--sunrise-ink); }
+.card.famday .meta { color: var(--sunrise-ink); opacity: .85; }
 .fd-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .famday h3 { font-size: 1.05rem; }
 .fd-turn { margin: 6px 0 2px; font-size: 1.02rem; }
