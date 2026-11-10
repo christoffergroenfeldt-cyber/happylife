@@ -12,7 +12,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '25'; // keep in step with CACHE in sw.js
+const APP_VERSION = '26'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -514,15 +514,21 @@ function viewHome() {
 // today, my tasks, and what is coming up for the children and for my wife.
 
 const WIFE = '@wife';                     // tag for "my wife" that works before she has joined
+const ME = '@me', FAMILY = '@family';      // "me" and "the whole family" – never counted as a child
+const TOKENS = [WIFE, ME, FAMILY];
 const KID_TYPES = ['school', 'sport', 'show'];
 const AHEAD = 30;                         // days of "coming up"
 const LOCALE = () => ({ da: 'da-DK', en: 'en-GB', fr: 'fr-FR' }[getLang()] || 'da-DK');
 
 const wifeMember = () => S.members.find((m) => m.roles.includes('wife') && m.user_id !== uid());
 const isWifeTag = (p) => p === WIFE || (!!wifeMember() && p === wifeMember().display_name);
-const personLabel = (p) => (p === WIFE ? wifeMember()?.display_name || t('td.myWife') : p);
+const isMeTag = (p) => p === ME || p === S.me.display_name;
+const personLabel = (p) => (p === WIFE ? wifeMember()?.display_name || t('td.myWife')
+  : p === ME ? t('td.me') : p === FAMILY ? t('td.family') : p);
+const isKidTag = (p) => !isWifeTag(p) && !isMeTag(p) && p !== FAMILY;
 const aboutWife = (ev) => (ev.people || []).some(isWifeTag);
-const aboutKids = (ev) => (ev.people || []).some((p) => !isWifeTag(p) && p !== S.me.display_name)
+const aboutFamily = (ev) => (ev.people || []).includes(FAMILY);
+const aboutKids = (ev) => (ev.people || []).some(isKidTag)
   || (!(ev.people || []).length && KID_TYPES.includes(ev.type));
 
 // Names used anywhere: children who have joined, event and calendar tags, pack list
@@ -531,18 +537,18 @@ function knownPeople() {
   S.events.forEach((ev) => (ev.people || []).forEach((p) => names.add(p)));
   (S.calendars || []).forEach((c) => (c.people || []).forEach((p) => names.add(p)));
   (S.packs || []).forEach((x) => x.who && names.add(x.who));
-  return [...names].filter((p) => p && !isWifeTag(p)).sort((a, b) => a.localeCompare(b));
+  return [...names].filter((p) => p && isKidTag(p)).sort((a, b) => a.localeCompare(b));
 }
 
 // Checkboxes for "my wife" + every known name, and a box to add a new name
 function peoplePicker(name, selected) {
-  const list = [WIFE, ...knownPeople()];
-  selected.forEach((p) => { if (!list.includes(p) && !(isWifeTag(p) && list.includes(WIFE))) list.push(p); });
-  const on = (p) => selected.includes(p) || (p === WIFE && selected.some(isWifeTag));
+  const list = [...TOKENS, ...knownPeople()];
+  selected.forEach((p) => { if (!list.includes(p) && isKidTag(p)) list.push(p); });
+  const on = (p) => selected.includes(p) || (p === WIFE && selected.some(isWifeTag)) || (p === ME && selected.some(isMeTag));
   return `<div data-people="${name}">
     <div class="checks">${list.map((p) => `
       <label class="check"><input type="checkbox" name="${name}" value="${esc(p)}" ${on(p) ? 'checked' : ''}>
-      <span>${p === WIFE ? '💛 ' : ''}${esc(personLabel(p))}</span></label>`).join('')}</div>
+      <span>${{ [WIFE]: '💛 ', [ME]: '🙋 ', [FAMILY]: '👨‍👩‍👧‍👦 ' }[p] || ''}${esc(personLabel(p))}</span></label>`).join('')}</div>
     <div class="copyrow"><input class="newperson" placeholder="${esc(t('td.otherName'))}" maxlength="40">
       <button type="button" class="small" data-act="addPerson" data-id="${name}">＋</button></div></div>`;
 }
@@ -583,7 +589,7 @@ function packRow(x, d) {
 
 const timeOf = (ev) => (ev.start_time ? ev.start_time.slice(0, 5) : '');
 const whoChips = (ev) => (ev.people || []).map((p) =>
-  `<span class="chip ${isWifeTag(p) ? 'role-wife' : 'kid'}">${esc(personLabel(p))}</span>`).join('');
+  `<span class="chip ${isWifeTag(p) ? 'role-wife' : isKidTag(p) ? 'kid' : ''}">${esc(personLabel(p))}</span>`).join('');
 
 // One event on the Today page; withDate for the "coming up" lists
 function dayEventRow(ev, date, withDate) {
@@ -655,7 +661,8 @@ function viewToday() {
   // 4–6. Coming up
   const kids = comingUp(d, aboutKids);
   const wife = comingUp(d, (ev) => aboutWife(ev) && !aboutKids(ev));
-  const shown = new Set([...kids, ...wife].map((x) => x.ev.id));
+  const family = comingUp(d, (ev) => aboutFamily(ev) && !aboutKids(ev) && !aboutWife(ev));
+  const shown = new Set([...kids, ...wife, ...family].map((x) => x.ev.id));
   const special = comingUp(d, (ev) => ['birthday', 'anniversary'].includes(ev.type) && ev.yearly && !shown.has(ev.id));
   const anyTags = S.events.some((ev) => (ev.people || []).length);
 
@@ -667,6 +674,7 @@ function viewToday() {
       : `<p class="empty">${esc(t('nothingToday'))}</p>`}` : ''}
     <h2>👧 ${esc(t('td.kids'))}</h2>${comingList(kids, 'td.none')}
     <h2>💛 ${esc(t('td.wife', { name: personLabel(WIFE) }))}</h2>${comingList(wife, 'td.none')}
+    ${family.length ? `<h2>👨‍👩‍👧‍👦 ${esc(t('td.familyComing'))}</h2>${comingList(family, 'td.none')}` : ''}
     ${special.length ? `<h2>🎂 ${esc(t('td.remember'))}</h2>${comingList(special, 'td.none')}` : ''}
     ${anyTags ? '' : `<p class="hint">💡 ${esc(t('td.tagHint'))}</p>`}`;
 }
