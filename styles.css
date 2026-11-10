@@ -441,3 +441,28 @@ a.book-link { display: flex; flex-direction: column; gap: 2px; padding: 10px 12p
 a.book-link strong { font-size: .95rem; }
 a.book-link span { font-size: .8rem; color: var(--muted); }
 a.book-link.map { border-style: dashed; }
+
+/* ---------- today (the husband's page) ---------- */
+[hidden] { display: none !important; }
+.today-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.today-head .hello { margin: 0; }
+.today-head .seg { justify-content: flex-end; }
+.card.bag { background: color-mix(in srgb, var(--sun2) 45%, var(--surface)); margin-top: 14px; }
+.bag-head { display: flex; align-items: center; justify-content: space-between; }
+.bag-head h2 { margin: 0; }
+.bag .subhead { margin: 14px 0 6px; font-size: 1rem; }
+.bag .acts { margin-top: 12px; }
+.bag .row.pack { padding: 10px 12px; align-items: center; }
+.bag details .row { cursor: pointer; align-items: center; }
+.row.dayev { align-items: center; }
+.row .when { flex: none; width: 46px; text-align: center; display: flex; flex-direction: column; line-height: 1.1; }
+.row .when b { font-size: 1.15rem; color: var(--head); }
+.row .when small { font-size: .72rem; color: var(--muted); text-transform: uppercase; font-weight: 700; }
+.row .when.time b { font-size: .98rem; }
+.chip.kid { background: color-mix(in srgb, var(--sun3) 55%, var(--surface)); color: var(--ink); font-weight: 700; }
+.chip.pack { background: var(--sun1); }
+.checks.days { gap: 4px 10px; }
+.cal-row .cal-name { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cal-row .cal-name > :first-child { overflow: hidden; text-overflow: ellipsis; }
+button.cal-who { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: none; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: .8rem; font-weight: 700; color: var(--muted); }

@@ -153,3 +153,8 @@ export function fmtDate(iso, lang) {
   const locale = { da: 'da-DK', en: 'en-GB', fr: 'fr-FR' }[lang] || 'da-DK';
   return new Date(y, m - 1, d).toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
 }
+
+// ISO weekday: 1 = Monday … 7 = Sunday
+export function isoDow(iso) {
+  return ((new Date(toUTC(iso)).getUTCDay() + 6) % 7) + 1;
+}

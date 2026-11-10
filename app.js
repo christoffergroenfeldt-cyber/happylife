@@ -1,18 +1,18 @@
 // Happy Life – main app
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, VAPID_PUBLIC_KEY } from './config.js';
-import { t, setLang, getLang, LANGS, IDEAS, EVENT_TASKS } from './i18n.js';
+import { t, setLang, getLang, LANGS, IDEAS, EVENT_TASKS, PACK_IDEAS } from './i18n.js';
 import { CUISINES, CATALOG, NEARBY, onlineLinks, MAP_QUERY } from './catalog.js';
 import { geocode, fetchNearby } from './places.js';
 import { AGES, ROUTINES, ROUTINE_REC, ROUTINE_TIME, TEMPLATES } from './templates.js';
-import { todayISO, daysBetween, addDays, trackerStatus, eventStatus, periodKey, periodEnd, eventOccurrence, fmtDate, nextWeekly } from './dates.js';
+import { todayISO, daysBetween, addDays, trackerStatus, eventStatus, periodKey, periodEnd, eventOccurrence, fmtDate, nextWeekly, isoDow } from './dates.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '24'; // keep in step with CACHE in sw.js
+const APP_VERSION = '25'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -47,6 +47,7 @@ const S = {
   sync: null, calendars: [], inbox: [], calView: 'list', findQ: '', loginCode: null, suggestions: [], ideaTab: 'event',
   places: [], chores: [], houseMode: 'todo', setupZone: 'daily', momentTab: 'family',
   find: null, nearby: null, nearbyMeta: null, findItems: [],
+  packs: [], packDone: [], todayDay: null,
   tab: 'home', authStep: 'email', authEmail: '', setupMode: pendingInvite() ? 'join' : 'create', ideaShift: {}, pushOn: false,
 };
 
@@ -143,8 +144,16 @@ async function loadAll() {
       sb.from('event_sources').select('event_id, calendar_id').then((r) => r.data || []),
     ]);
     Object.assign(S, { sync, calendars, inbox, evSources });
+    const [packs, packDone] = await Promise.all([
+      sb.from('pack_items').select('*').order('created_at').then((r) => r.data || []),
+      sb.from('pack_done').select('*').gte('on_date', isoMinus(7)).then((r) => r.data || []),
+    ]);
+    Object.assign(S, { packs, packDone });
   }
 }
+
+// The husband lands on the Today page
+function landing() { if (S.me?.roles?.includes('husband')) S.tab = 'today'; }
 
 function isoMinus(days) {
   const d = new Date(); d.setDate(d.getDate() - days); return todayISO(d);
@@ -215,7 +224,8 @@ function eventTaskLabel(task) {
   return n === 0 ? t('onEventDay', { title }) : n === 1 ? t('dayBeforeEvent', { title }) : t('daysBeforeEvent', { n, title });
 }
 
-const eventIcon = (type) => ({ vacation: '🏖️', anniversary: '💍', birthday: '🎂', other: '📌' }[type] || '📌');
+const EVENT_TYPES = ['vacation', 'anniversary', 'birthday', 'school', 'sport', 'show', 'other'];
+const eventIcon = (type) => ({ vacation: '🏖️', anniversary: '💍', birthday: '🎂', school: '🏫', sport: '⚽', show: '🎭', other: '📌' }[type] || '📌');
 
 // Point counters: a child sees their own, parents see every child's
 function pointsCard() {
@@ -293,9 +303,11 @@ function render() {
   setLang(store('hl-lang') || getLang());
   if (!S.session) return renderAuth();
   if (!S.me) return renderSetup();
-  const tabs = ['home', 'tasks', 'house', 'moments', 'calendar', 'family'];
+  const tabs = [...(myRoles().includes('husband') ? ['today'] : []), 'home', 'tasks', 'house', 'moments', 'calendar', 'family'];
+  if (!tabs.includes(S.tab)) S.tab = 'home';
   const svg = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
   const icons = {
+    today: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>'),
     home: svg('<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>'),
     tasks: svg('<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.5 12l2.5 2.5 4.5-5"/>'),
     house: svg('<path d="M4 20V10.5L12 4l8 6.5V20"/><path d="M9 20v-5h6v5"/><path d="M15 3.5l5 0.5-0.5 5"/>'),
@@ -303,12 +315,12 @@ function render() {
     calendar: svg('<rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/>'),
     family: svg('<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2A4.5 4.5 0 0 1 21 18.5"/>'),
   };
-  const views = { home: viewHome, tasks: viewTasks, house: viewHouse, moments: viewMoments, calendar: viewCalendar, family: viewFamily };
+  const views = { today: viewToday, home: viewHome, tasks: viewTasks, house: viewHouse, moments: viewMoments, calendar: viewCalendar, family: viewFamily };
   app.innerHTML = `
     <header class="top"><h1>${esc(t('tabs.' + S.tab))}</h1><span class="fam">${esc(S.family?.name)}</span>
       <button class="icon refresh" data-act="hardRefresh" aria-label="${t('updateApp')}" title="${t('updateApp')}">↻</button></header>
     <main class="view">${views[S.tab]()}</main>
-    <nav class="tabs">${tabs.map((k) => `
+    <nav class="tabs" style="grid-template-columns:repeat(${tabs.length},1fr)">${tabs.map((k) => `
       <button data-act="tab" data-id="${k}" class="${S.tab === k ? 'on' : ''}">
         <span class="ico">${icons[k]}</span><span>${esc(t('tabs.' + k))}</span></button>`).join('')}
     </nav>`;
@@ -495,6 +507,266 @@ function viewHome() {
                   : `<p class="empty">${esc(t('nothingToday'))}</p>`}
     ${due.length ? `<h2>${esc(t('timeFor'))}</h2>${pick}${shown.map(({ tr, st }) => momentCard(tr, st, true)).join('')}` : ''}
     ${!due.length && !mine.length && !free.length ? `<p class="allgood">${esc(t('allGood'))}</p>` : ''}`;
+}
+
+// ------------------------------------------------------------ today (the husband's page)
+// One screen for the morning: what goes in the children's bags, what happens
+// today, my tasks, and what is coming up for the children and for my wife.
+
+const WIFE = '@wife';                     // tag for "my wife" that works before she has joined
+const KID_TYPES = ['school', 'sport', 'show'];
+const AHEAD = 30;                         // days of "coming up"
+const LOCALE = () => ({ da: 'da-DK', en: 'en-GB', fr: 'fr-FR' }[getLang()] || 'da-DK');
+
+const wifeMember = () => S.members.find((m) => m.roles.includes('wife') && m.user_id !== uid());
+const isWifeTag = (p) => p === WIFE || (!!wifeMember() && p === wifeMember().display_name);
+const personLabel = (p) => (p === WIFE ? wifeMember()?.display_name || t('td.myWife') : p);
+const aboutWife = (ev) => (ev.people || []).some(isWifeTag);
+const aboutKids = (ev) => (ev.people || []).some((p) => !isWifeTag(p) && p !== S.me.display_name)
+  || (!(ev.people || []).length && KID_TYPES.includes(ev.type));
+
+// Names used anywhere: children who have joined, event and calendar tags, pack list
+function knownPeople() {
+  const names = new Set(children().map((c) => c.display_name));
+  S.events.forEach((ev) => (ev.people || []).forEach((p) => names.add(p)));
+  (S.calendars || []).forEach((c) => (c.people || []).forEach((p) => names.add(p)));
+  (S.packs || []).forEach((x) => x.who && names.add(x.who));
+  return [...names].filter((p) => p && !isWifeTag(p)).sort((a, b) => a.localeCompare(b));
+}
+
+// Checkboxes for "my wife" + every known name, and a box to add a new name
+function peoplePicker(name, selected) {
+  const list = [WIFE, ...knownPeople()];
+  selected.forEach((p) => { if (!list.includes(p) && !(isWifeTag(p) && list.includes(WIFE))) list.push(p); });
+  const on = (p) => selected.includes(p) || (p === WIFE && selected.some(isWifeTag));
+  return `<div data-people="${name}">
+    <div class="checks">${list.map((p) => `
+      <label class="check"><input type="checkbox" name="${name}" value="${esc(p)}" ${on(p) ? 'checked' : ''}>
+      <span>${p === WIFE ? '💛 ' : ''}${esc(personLabel(p))}</span></label>`).join('')}</div>
+    <div class="copyrow"><input class="newperson" placeholder="${esc(t('td.otherName'))}" maxlength="40">
+      <button type="button" class="small" data-act="addPerson" data-id="${name}">＋</button></div></div>`;
+}
+const pickedPeople = (form, name) => {
+  const typed = form.querySelector(`[data-people="${name}"] input.newperson`)?.value.trim();
+  return [...new Set([...new FormData(form).getAll(name), ...(typed ? [typed] : [])])].slice(0, 12);
+};
+
+// Does the event happen on this date? (multi-day, yearly and weekly series included)
+function occursOn(ev, iso) {
+  const st = eventStatus(ev, iso);
+  return st.ongoing || st.days === 0;
+}
+
+// Which day the page shows: today, or tomorrow from 15:00 (packing the night before)
+function todayDate() {
+  if (!S.todayDay) S.todayDay = new Date().getHours() >= 15 ? 'tomorrow' : 'today';
+  return S.todayDay === 'tomorrow' ? addDays(today(), 1) : today();
+}
+const fmtDay = (iso, opts) => new Date(`${iso}T12:00:00`).toLocaleDateString(LOCALE(), opts);
+const packIsDone = (id, d) => S.packDone.some((x) => x.item_id === id && x.on_date === d);
+
+function packsOn(d) {
+  const dow = isoDow(d);
+  return S.packs.filter((x) => (x.days || []).includes(dow) || x.on_date === d
+    || (x.event_id && S.events.some((ev) => ev.id === x.event_id && occursOn(ev, d))));
+}
+
+function packRow(x, d) {
+  const done = packIsDone(x.id, d);
+  const ev = x.event_id ? byId(S.events, x.event_id) : null;
+  const meta = [ev ? `${eventIcon(ev.type)} ${ev.title}` : '', x.notes || ''].filter(Boolean);
+  return `<div class="row pack ${done ? 'is-done' : ''}">
+    <div class="lead"><button class="tick ${done ? 'on' : ''}" data-act="packTick" data-id="${x.id}" aria-label="${esc(t('td.packed'))}">${done ? '✓' : ''}</button></div>
+    <div class="body"><div class="ttl">${esc(x.title)}</div>${meta.length ? `<div class="meta">${meta.map(esc).join(' · ')}</div>` : ''}</div>
+    <button class="icon" data-act="editPack" data-id="${x.id}" aria-label="${t('edit')}">✎</button></div>`;
+}
+
+const timeOf = (ev) => (ev.start_time ? ev.start_time.slice(0, 5) : '');
+const whoChips = (ev) => (ev.people || []).map((p) =>
+  `<span class="chip ${isWifeTag(p) ? 'role-wife' : 'kid'}">${esc(personLabel(p))}</span>`).join('');
+
+// One event on the Today page; withDate for the "coming up" lists
+function dayEventRow(ev, date, withDate) {
+  const packs = S.packs.filter((x) => x.event_id === ev.id).map((x) => x.title);
+  const days = daysBetween(today(), date);
+  const when = withDate ? `<div class="when"><b>${esc(fmtDay(date, { day: 'numeric' }))}</b><small>${esc(fmtDay(date, { month: 'short' }))}</small></div>`
+    : `<div class="when time">${timeOf(ev) ? `<b>${esc(timeOf(ev))}</b>` : `<small>${esc(t('td.allDay'))}</small>`}</div>`;
+  const meta = [];
+  if (withDate) meta.push(`${cap(fmtDay(date, { weekday: 'long' }))}${timeOf(ev) ? ` ${timeOf(ev)}` : ''}`);
+  if (withDate && days > 0) meta.push(`<strong>${esc(t('inDays', days))}</strong>`);
+  return `<div class="row event dayev" data-act="editEvent" data-id="${ev.id}">
+    ${when}
+    <div class="body"><div class="ttl">${eventIcon(ev.type)} ${esc(ev.title)}</div>
+      <div class="meta">${meta.map((m) => (m.startsWith('<') ? m : esc(m))).join(' · ')}</div>
+      ${(ev.people || []).length || packs.length ? `<div class="takers">${whoChips(ev)}${packs.length ? `<span class="chip pack">🎒 ${esc(packs.join(', '))}</span>` : ''}</div>` : ''}
+    </div></div>`;
+}
+
+// Events in the next AHEAD days after date d (weekly series are left out – they show on their day)
+function comingUp(d, test) {
+  const from = addDays(d, 1);
+  return S.events.filter((ev) => !ev.every_weeks && test(ev))
+    .map((ev) => ({ ev, st: eventStatus(ev, from) }))
+    .filter(({ st }) => st.ongoing || (st.days >= 0 && st.days < AHEAD))
+    .map(({ ev, st }) => ({ ev, date: st.ongoing ? from : st.date }))
+    .sort((a, b) => a.date.localeCompare(b.date) || timeOf(a.ev).localeCompare(timeOf(b.ev)));
+}
+
+function comingList(rows, emptyKey) {
+  const FIRST = 6;
+  if (!rows.length) return `<p class="empty">${esc(t(emptyKey))}</p>`;
+  const html = (list) => `<div class="list">${list.map(({ ev, date }) => dayEventRow(ev, date, true)).join('')}</div>`;
+  return html(rows.slice(0, FIRST)) + (rows.length > FIRST
+    ? `<details class="more"><summary>${esc(t('showAll'))} (${rows.length})</summary>${html(rows.slice(FIRST))}</details>` : '');
+}
+
+function viewToday() {
+  const d = todayDate();
+  const isToday = d === today();
+  const head = `<div class="today-head">
+      <p class="hello">${esc(cap(fmtDay(d, { weekday: 'long', day: 'numeric', month: 'long' })))}</p>
+      <div class="seg"><button data-act="todayDay" data-id="today" class="${isToday ? 'on' : ''}">${esc(t('td.today'))}</button>
+        <button data-act="todayDay" data-id="tomorrow" class="${isToday ? '' : 'on'}">${esc(t('td.tomorrow'))}</button></div></div>`;
+
+  // 1. Bags: grouped by child, everyone else last
+  const packs = packsOn(d);
+  const groups = {};
+  packs.forEach((x) => { (groups[x.who || ''] ||= []).push(x); });
+  const order = Object.keys(groups).sort((a, b) => (!a) - (!b) || a.localeCompare(b));
+  const nDone = packs.filter((x) => packIsDone(x.id, d)).length;
+  const bag = `<div class="card bag">
+      <div class="bag-head"><h2>🎒 ${esc(t('td.pack'))}</h2>
+        ${packs.length ? `<span class="chip ${nDone === packs.length ? 'yes' : ''}">${nDone}/${packs.length}</span>` : ''}</div>
+      ${packs.length ? order.map((w) => `<h3 class="subhead">${esc(w || t('td.everyone'))}</h3>
+        <div class="list">${groups[w].map((x) => packRow(x, d)).join('')}</div>`).join('')
+        : `<p class="empty">${esc(t('td.packEmpty'))}</p>`}
+      <div class="acts"><button class="small primary" data-act="newPack">＋ ${t('td.addPack')}</button></div>
+      ${S.packs.length ? `<details><summary>${esc(t('td.allPack'))} (${S.packs.length})</summary>${packOverview()}</details>` : ''}
+    </div>`;
+
+  // 2. What happens that day
+  const program = S.events.filter((ev) => occursOn(ev, d))
+    .sort((a, b) => (timeOf(a) || '00').localeCompare(timeOf(b) || '00'));
+
+  // 3. My tasks (today only)
+  const mine = isToday ? S.tasks.map((task) => ({ task, st: taskState(task) }))
+    .filter(({ st }) => st.active && !st.done && (st.kind === 'open' ? st.took : st.forMe)) : [];
+
+  // 4–6. Coming up
+  const kids = comingUp(d, aboutKids);
+  const wife = comingUp(d, (ev) => aboutWife(ev) && !aboutKids(ev));
+  const shown = new Set([...kids, ...wife].map((x) => x.ev.id));
+  const special = comingUp(d, (ev) => ['birthday', 'anniversary'].includes(ev.type) && ev.yearly && !shown.has(ev.id));
+  const anyTags = S.events.some((ev) => (ev.people || []).length);
+
+  return `${head}${bag}
+    <h2>📅 ${esc(t(isToday ? 'td.program' : 'td.programTomorrow'))}</h2>
+    ${program.length ? `<div class="list">${program.map((ev) => dayEventRow(ev, d, false)).join('')}</div>` : `<p class="empty">${esc(t('td.noProgram'))}</p>`}
+    ${isToday ? `<h2>✅ ${esc(t('myToday'))}</h2>${mine.length
+      ? `<div class="list">${mine.map(({ task, st }) => (isHouse(task) ? houseRow(task, st, true) : taskRow(task, st))).join('')}</div>`
+      : `<p class="empty">${esc(t('nothingToday'))}</p>`}` : ''}
+    <h2>👧 ${esc(t('td.kids'))}</h2>${comingList(kids, 'td.none')}
+    <h2>💛 ${esc(t('td.wife', { name: personLabel(WIFE) }))}</h2>${comingList(wife, 'td.none')}
+    ${special.length ? `<h2>🎂 ${esc(t('td.remember'))}</h2>${comingList(special, 'td.none')}` : ''}
+    ${anyTags ? '' : `<p class="hint">💡 ${esc(t('td.tagHint'))}</p>`}`;
+}
+
+// All pack items, for changing ones that aren't due today
+function packOverview() {
+  const dayNames = [1, 2, 3, 4, 5, 6, 7].map((i) => fmtDay(addDays('2024-01-01', i - 1), { weekday: 'short' }));
+  const whenOf = (x) => {
+    if (x.days?.length) return x.days.length === 5 && [1, 2, 3, 4, 5].every((i) => x.days.includes(i))
+      ? t('td.weekdays') : x.days.slice().sort().map((i) => dayNames[i - 1]).join(', ');
+    if (x.on_date) return fmtDate(x.on_date, getLang());
+    const ev = byId(S.events, x.event_id);
+    return ev ? `${eventIcon(ev.type)} ${ev.title}` : '';
+  };
+  return `<div class="list">${S.packs.slice().sort((a, b) => (a.who || '~').localeCompare(b.who || '~') || a.title.localeCompare(b.title)).map((x) => `
+    <div class="row" data-act="editPack" data-id="${x.id}"><div class="body"><div class="ttl">${esc(x.title)}</div>
+      <div class="meta">${esc(x.who || t('td.everyone'))} · ${esc(whenOf(x))}</div></div><span class="icon">✎</span></div>`).join('')}</div>`;
+}
+
+// preset: { event_id } when started from an event
+function packForm(item, preset = {}) {
+  const x = item || { title: '', who: '', days: [], on_date: '', event_id: null, notes: '', ...preset };
+  const mode = x.event_id ? 'event' : x.on_date ? 'date' : 'days';
+  const dayNames = [1, 2, 3, 4, 5, 6, 7].map((i) => fmtDay(addDays('2024-01-01', i - 1), { weekday: 'short' }));
+  const td = today();
+  const evs = S.events.filter((ev) => ev.id === x.event_id
+      || (ev.every_weeks ? nextWeekly(ev, td) : eventStatus(ev, td).days >= 0 && eventStatus(ev, td).days <= 120))
+    .map((ev) => ({ ev, date: eventStatus(ev, td).date })).sort((a, b) => a.date.localeCompare(b.date));
+  const ideas = PACK_IDEAS[getLang()] || PACK_IDEAS.da;
+  openDialog(`
+    <form id="packForm" class="form">
+      <h2>🎒 ${item ? esc(item.title) : t('td.packNew')}</h2>
+      <label>${t('td.packTitle')}<input name="title" value="${esc(x.title)}" maxlength="120" required></label>
+      <div class="sugg">${ideas.map((i) => `<button type="button" class="chip-btn" data-idea="${esc(i)}">${esc(i)}</button>`).join('')}</div>
+      <label>${t('td.whoPack')}<input name="who" value="${esc(x.who || '')}" list="packWho" maxlength="40" placeholder="${esc(t('td.everyone'))}">
+        <datalist id="packWho">${knownPeople().map((p) => `<option value="${esc(p)}">`).join('')}</datalist></label>
+      <label>${t('td.when')}<select name="mode">
+        ${['days', 'date', 'event'].map((m) => `<option value="${m}" ${m === mode ? 'selected' : ''}>${esc(t('td.when_' + m))}</option>`).join('')}</select></label>
+      <fieldset data-mode="days"><div class="checks days">${dayNames.map((n, i) => `
+        <label class="check"><input type="checkbox" name="days" value="${i + 1}" ${(x.days || []).includes(i + 1) ? 'checked' : ''}><span>${esc(n)}</span></label>`).join('')}</div></fieldset>
+      <label data-mode="date">${t('td.date')}<input name="on_date" type="date" value="${esc(x.on_date || td)}"></label>
+      <label data-mode="event">${t('td.pickEvent')}<select name="event_id">${evs.map(({ ev, date }) =>
+        `<option value="${ev.id}" ${ev.id === x.event_id ? 'selected' : ''}>${eventIcon(ev.type)} ${esc(ev.title)} – ${esc(ev.every_weeks ? weeklyLabel(ev, eventStatus(ev, td)) : fmtDate(date, getLang()))}</option>`).join('')}</select></label>
+      <label>${t('notes')}<input name="notes" value="${esc(x.notes || '')}" maxlength="300"></label>
+      <div class="btns">
+        ${item ? `<button type="button" class="danger" data-act="delPack" data-id="${item.id}">${t('delete')}</button>` : ''}
+        <span class="grow"></span>
+        <button type="button" data-act="close">${t('cancel')}</button>
+        <button class="primary" type="submit">${t('save')}</button>
+      </div>
+    </form>`);
+  const form = document.getElementById('packForm');
+  const show = () => form.querySelectorAll('[data-mode]').forEach((el) => { el.hidden = el.dataset.mode !== form.elements.mode.value; });
+  form.elements.mode.onchange = show; show();
+  form.querySelectorAll('[data-idea]').forEach((b) => { b.onclick = () => { form.elements.title.value = b.dataset.idea; }; });
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(form);
+    const m = f.get('mode');
+    const row = { title: f.get('title').trim(), who: f.get('who').trim() || null, notes: f.get('notes').trim() || null,
+      days: m === 'days' ? f.getAll('days').map(Number) : [], on_date: m === 'date' ? f.get('on_date') || null : null,
+      event_id: m === 'event' ? f.get('event_id') || null : null };
+    if (!row.title) return toast(t('needTitle'), true);
+    if (m === 'days' && !row.days.length) return toast(t('td.needDay'), true);
+    if ((m === 'date' && !row.on_date) || (m === 'event' && !row.event_id)) return toast(t('td.needWhen'), true);
+    if (item) await run(sb.from('pack_items').update(row).eq('id', item.id));
+    else await run(sb.from('pack_items').insert(row));
+    closeDialog(); await refresh();
+  };
+}
+
+// Inside an event: what has to be packed for it
+function eventPackSection(ev) {
+  if (!ev || !isParent()) return '';
+  const list = S.packs.filter((x) => x.event_id === ev.id);
+  return `<fieldset class="ev-tasks"><legend>🎒 ${t('td.eventPack')}</legend>
+    ${list.length ? `<div class="list">${list.map((x) => `
+      <button type="button" class="ev-task" data-act="editPack" data-id="${x.id}">
+        <span class="ttl">${esc(x.title)}</span><span class="meta">${esc(x.who || t('td.everyone'))}</span></button>`).join('')}</div>` : ''}
+    <div class="sugg"><button type="button" class="chip-btn" data-act="eventPack" data-id="${ev.id}">＋ ${t('td.addToPack')}</button></div>
+  </fieldset>`;
+}
+
+// Family → Calendar from iPhone: who a phone calendar is about (e.g. Aula → Victor)
+function calPeopleForm(cal) {
+  openDialog(`
+    <form id="calPeopleForm" class="form">
+      <h2>👤 ${esc(cal.name)}</h2>
+      <p class="hint">${esc(t('td.calWhoHelp'))}</p>
+      ${peoplePicker('people', cal.people || [])}
+      <div class="btns"><span class="grow"></span>
+        <button type="button" data-act="close">${t('cancel')}</button>
+        <button class="primary" type="submit">${t('save')}</button></div>
+    </form>`);
+  const form = document.getElementById('calPeopleForm');
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    await run(sb.rpc('set_calendar_people', { p_id: cal.id, p_people: pickedPeople(form, 'people') }));
+    closeDialog(); await refresh();
+  };
 }
 
 // ------------------------------------------------------------ tasks + plans
@@ -1685,15 +1957,18 @@ function eventForm(ev, preset = null) {
     <form id="eventForm" class="form">
       <h2>${ev ? `${eventIcon(ev.type)} ${esc(ev.title)}` : t('newEvent')}</h2>
       ${eventTasksSection(ev)}
+      ${eventPackSection(ev)}
       ${eventMomentSection(ev)}
       ${followed ? `<p class="hint">🔍 ${esc(t('followedFrom', { cal: calName(followed.calendar_id) }))}</p>`
         : fixed ? `<p class="hint">📱 ${esc(t('fromPhone'))}</p>` : ''}
-      <label>${t('kind')}<select name="type">${['vacation', 'anniversary', 'birthday', 'other'].map((k) =>
+      <label>${t('kind')}<select name="type">${EVENT_TYPES.map((k) =>
         `<option value="${k}" ${k === e0.type ? 'selected' : ''}>${esc(t('types.' + k))}</option>`).join('')}</select></label>
       <label>${t('title')}<input name="title" value="${esc(e0.title)}" required ${fixed ? 'disabled' : ''}></label>
       <div class="two"><label>${t('start')}<input name="start_date" type="date" value="${e0.start_date}" required ${fixed ? 'disabled' : ''}></label>
         <label>${t('end')}<input name="end_date" type="date" value="${e0.end_date || ''}" ${fixed ? 'disabled' : ''}></label></div>
+      <label>${t('td.time')}<input name="start_time" type="time" value="${esc(e0.start_time || '')}" ${fixed ? 'disabled' : ''}></label>
       <label class="check"><input type="checkbox" name="yearly" ${e0.yearly ? 'checked' : ''} ${fixed ? 'disabled' : ''}><span>${t('yearly')}</span></label>
+      <fieldset><legend>${t('td.who')}</legend>${peoplePicker('people', e0.people || [])}</fieldset>
       <label>${t('remindBefore')}<input name="remind_days" type="number" min="0" value="${e0.remind_days}"></label>
       <fieldset><legend>${t('visibleTo')}</legend>${roleCheckboxes('roles', ITEM_ROLES, e0.roles)}</fieldset>
       <div class="btns">
@@ -1711,9 +1986,10 @@ function eventForm(ev, preset = null) {
   form.onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(form);
-    const row = { type: f.get('type'), remind_days: Number(f.get('remind_days')) || 0, roles: f.getAll('roles') };
+    const row = { type: f.get('type'), remind_days: Number(f.get('remind_days')) || 0, roles: f.getAll('roles'),
+      people: pickedPeople(form, 'people') };
     if (!fixed) Object.assign(row, { title: f.get('title').trim(), start_date: f.get('start_date'),
-      end_date: f.get('end_date') || null, yearly: f.get('yearly') === 'on' });
+      end_date: f.get('end_date') || null, yearly: f.get('yearly') === 'on', start_time: f.get('start_time') || null });
     if (row.end_date && row.end_date < row.start_date) row.end_date = row.start_date;
     if (!row.roles.length) return toast(t('needRole'), true);
     if (ev) { await run(sb.from('events').update(row).eq('id', ev.id)); closeDialog(); await refresh(); return; }
@@ -1814,7 +2090,8 @@ function calendarSection() {
         <p class="meta">${s.last_sync_at ? `${esc(t('lastSync'))}: ${esc(when)}<br>${esc(s.last_result || '')}` : esc(t('notSynced'))}</p>
         ${S.calendars.length ? `<div class="cal-list">
           ${S.calendars.map((c) => { const mode = c.included ? 'on' : c.pick ? 'pick' : 'off'; return `<div class="cal-row">
-            <span class="cal-name">${esc(c.name)}</span>
+            <span class="cal-name"><span>${esc(c.name)}</span>
+              <button type="button" class="cal-who" data-act="calPeople" data-id="${c.id}">👤 ${c.people?.length ? esc(c.people.map(personLabel).join(', ')) : esc(t('td.calWhoNone'))}</button></span>
             <div class="seg cal-mode" role="radiogroup" aria-label="${esc(c.name)}">${['off', 'pick', 'on'].map((m) => `
               <button type="button" class="${mode === m ? 'on' : ''}" data-act="calMode" data-id="${c.id}|${m}"
                 role="radio" aria-checked="${mode === m}">${esc(t('mode_' + m))}</button>`).join('')}</div>
@@ -2018,6 +2295,31 @@ const ACTIONS = {
     await run(sb.from('tracker_entries').delete().eq('id', id)); await refresh(); },
   idea: (id) => { S.ideaShift[id] = (S.ideaShift[id] || 0) + 1; render(); },
 
+  todayDay: (id) => { S.todayDay = id; render(); },
+  newPack: () => packForm(null),
+  editPack: (id) => packForm(byId(S.packs, id)),
+  eventPack: (evId) => packForm(null, { event_id: evId }),
+  delPack: async (id) => { if (!confirm(t('confirmDelete'))) return;
+    await run(sb.from('pack_items').delete().eq('id', id)); closeDialog(); await refresh(); },
+  packTick: async (id) => {
+    const d = todayDate();
+    if (packIsDone(id, d)) await run(sb.from('pack_done').delete().eq('item_id', id).eq('on_date', d));
+    else await run(sb.from('pack_done').insert({ item_id: id, on_date: d }));
+    await refresh();
+  },
+  calPeople: (id) => calPeopleForm(byId(S.calendars, id)),
+  addPerson: (name) => {
+    const box = document.querySelector(`[data-people="${name}"]`);
+    const inp = box?.querySelector('input.newperson');
+    const v = inp?.value.trim();
+    if (!v) return;
+    const lbl = document.createElement('label');
+    lbl.className = 'check';
+    lbl.innerHTML = `<input type="checkbox" name="${name}" value="${esc(v)}" checked><span>${esc(v)}</span>`;
+    box.querySelector('.checks').appendChild(lbl);
+    inp.value = '';
+  },
+
   newEvent: () => eventForm(null),
   editEvent: (id) => eventForm(byId(S.events, id)),
   newEventTask: (id) => {
@@ -2153,7 +2455,7 @@ document.addEventListener('submit', (e) => {
 
 // Refresh when the app comes back to the foreground (dates may have changed)
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && S.me) refresh().catch(() => {});
+  if (document.visibilityState === 'visible' && S.me) { S.todayDay = null; refresh().catch(() => {}); }
 });
 
 // ------------------------------------------------------------ start
@@ -2168,7 +2470,7 @@ document.addEventListener('visibilitychange', () => {
   }
   const { data } = await sb.auth.getSession();
   S.session = data.session;
-  if (S.session) { try { await loadAll(); } catch { /* shown */ } }
+  if (S.session) { try { await loadAll(); landing(); } catch { /* shown */ } }
   render();
   ensurePush().then(() => { if (S.pushOn && S.tab === 'family') render(); });
   sb.auth.onAuthStateChange(async (event, session) => {
@@ -2179,7 +2481,7 @@ document.addEventListener('visibilitychange', () => {
     S.pushOn = false;
     S.loginCode = null;
     S.authStep = 'email';
-    if (session) { try { await loadAll(); } catch { /* shown */ } }
+    if (session) { try { await loadAll(); landing(); } catch { /* shown */ } }
     render();
     ensurePush();
   });

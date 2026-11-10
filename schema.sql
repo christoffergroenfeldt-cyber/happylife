@@ -553,6 +553,15 @@ alter table tasks add column if not exists event_until date;
 alter table tasks add column if not exists event_skips date[] not null default '{}';
 
 alter table events add column if not exists ext_key text;          -- set for imported events
+-- Today page: time of day ('HH:MM', null = all day) and who an event is about
+-- (names, e.g. 'Carl', or '@wife'); a phone calendar can carry a default "who"
+alter table events add column if not exists start_time text check (start_time is null or start_time ~ '^\d{2}:\d{2}$');
+alter table events add column if not exists people text[] not null default '{}';
+alter table events drop constraint if exists events_people_ok;
+alter table events add constraint events_people_ok check (cardinality(people) <= 12);
+alter table events drop constraint if exists events_type_check;
+alter table events add constraint events_type_check
+  check (type in ('vacation','anniversary','birthday','school','sport','show','other'));
 alter table events add column if not exists imported boolean not null default false;
 create unique index if not exists events_ext_key on events(family_id, ext_key);
 
@@ -638,6 +647,7 @@ create policy uc_select on user_calendars for select using (user_id = auth.uid()
 -- imported) or pick (events wait in the parent's "Find events" inbox until
 -- they are followed one by one – for busy feeds like Aula or ForældreIntra)
 alter table user_calendars add column if not exists pick boolean not null default false;
+alter table user_calendars add column if not exists people text[] not null default '{}';
 alter table user_calendars drop constraint if exists user_calendars_one_mode;
 alter table user_calendars add constraint user_calendars_one_mode check (not (included and pick));
 
@@ -692,6 +702,9 @@ language sql immutable set search_path = public as $$
   select case
     when p_title || ' ' || p_calendar ~* '(fødsels|fodsels|birthday|anniversaire de|geburtstag|cumpleaños)' then 'birthday'
     when p_title || ' ' || p_calendar ~* '(bryllup|mærkedag|anniversary|anniversaire|jubilæum|kæreste)' then 'anniversary'
+    when p_title ~* '(forældremøde|foraeldremode|skole-hjem|skolehjem|samtale|forældrekaffe|parent.?teacher|réunion|lejrskole|udflugt|ekskursion|field trip|sortie|motionsdag|fotografering|klassefest|skolefest)' then 'school'
+    when p_title ~* '(forestilling|koncert|opvisning|optræden|teater|musical|lucia|show|spectacle|concert|recital|performance)' then 'show'
+    when p_title ~* '(kamp|stævne|staevne|turnering|\mcup\M|match|tournament|tournoi|træning|traening|training|entraînement)' then 'sport'
     when p_title || ' ' || p_calendar ~* '(ferie|vacation|holiday|vacances|rejse|trip)' then 'vacation'
     else 'other' end
 $$;
@@ -878,13 +891,16 @@ begin
                                   and ci.ext_key = x.k and ci.status = 'followed' and ci.event_id is not null)
   ), up as (
     insert into events(family_id, type, title, start_date, end_date, yearly, every_weeks, repeat_until, skip_dates,
-                       remind_days, roles, created_by, ext_key, imported)
+                       remind_days, roles, created_by, ext_key, imported, start_time, people)
     select distinct on (k) me.family_id, cal_guess_type(title, cal_name), title, start_date, end_date, yearly,
            every_weeks, repeat_until, skip_dates, case when every_weeks is null then 7 else 1 end,
-           '{mother,father}', me.user_id, k, true
+           '{mother,father}', me.user_id, k, true, tm,
+           (select uc.people from user_calendars uc where uc.id = src.cal_id)
       from src order by k, start_date
     on conflict (family_id, ext_key) do update
       set end_date = case when events.yearly then null else excluded.end_date end,
+          start_time = excluded.start_time,
+          people = case when events.people = '{}' then excluded.people else events.people end,
           -- a series keeps its earlier start (and skipped weeks before this sync's window)
           start_date = case when excluded.every_weeks is null then events.start_date
                             when events.start_date < excluded.start_date
@@ -1003,10 +1019,10 @@ begin
   if p_status = 'followed' then
     if it.status = 'followed' and it.event_id is not null then return it.event_id; end if;
     insert into events(family_id, type, title, start_date, end_date, yearly, every_weeks, repeat_until, skip_dates,
-                       remind_days, roles, created_by, ext_key, imported)
+                       remind_days, roles, created_by, ext_key, imported, start_time, people)
       values (cal.family_id, cal_guess_type(it.title, cal.name), it.title, it.start_date, it.end_date, false,
               it.every_weeks, it.repeat_until, it.skip_dates, case when it.every_weeks is null then 7 else 1 end,
-              '{mother,father}', auth.uid(), it.ext_key, true)
+              '{mother,father}', auth.uid(), it.ext_key, true, it.start_time, cal.people)
       on conflict (family_id, ext_key) do update set title = events.title   -- already there (other calendar)
       returning id into ev_id;
     insert into event_sources(event_id, user_id, calendar_id) values (ev_id, auth.uid(), it.calendar_id)
@@ -1454,3 +1470,69 @@ grant execute on function set_home(text, double precision, double precision, int
 drop policy if exists es_select on event_sources;
 create policy es_select on event_sources for select using (user_id = auth.uid());
 grant select on event_sources to authenticated;
+
+-- ================================================================ today page (pack list)
+-- What has to go with the children on a given day: on fixed weekdays
+-- (1 = Monday … 7 = Sunday), on one date, or on the day of a calendar event
+-- (a weekly series follows its skipped weeks). Parents only.
+create table if not exists pack_items (
+  id         uuid primary key default gen_random_uuid(),
+  family_id  uuid not null default my_family() references families on delete cascade,
+  title      text not null check (length(title) between 1 and 120),
+  who        text check (who is null or length(who) between 1 and 40),
+  days       smallint[] not null default '{}' check (days <@ array[1,2,3,4,5,6,7]::smallint[]),
+  on_date    date,
+  event_id   uuid references events on delete cascade,
+  notes      text check (notes is null or length(notes) <= 300),
+  created_by uuid default auth.uid() references auth.users on delete set null,
+  created_at timestamptz not null default now(),
+  constraint pack_when check ((cardinality(days) > 0)::int + (on_date is not null)::int + (event_id is not null)::int = 1)
+);
+create index if not exists pack_items_family on pack_items(family_id);
+alter table pack_items enable row level security;
+drop policy if exists pi_all on pack_items;
+create policy pi_all on pack_items for all
+  using (family_id = my_family() and i_am_parent())
+  with check (family_id = my_family() and i_am_parent());
+
+-- Ticked off as packed (one row per item and day; both parents see it)
+create table if not exists pack_done (
+  item_id  uuid not null references pack_items on delete cascade,
+  on_date  date not null,
+  done_by  uuid not null default auth.uid() references auth.users on delete cascade,
+  done_at  timestamptz not null default now(),
+  primary key (item_id, on_date)
+);
+alter table pack_done enable row level security;
+drop policy if exists pd_select on pack_done;
+create policy pd_select on pack_done for select
+  using (i_am_parent() and exists (select 1 from pack_items p where p.id = item_id and p.family_id = my_family()));
+drop policy if exists pd_insert on pack_done;
+create policy pd_insert on pack_done for insert
+  with check (done_by = auth.uid() and i_am_parent()
+              and exists (select 1 from pack_items p where p.id = item_id and p.family_id = my_family()));
+drop policy if exists pd_delete on pack_done;
+create policy pd_delete on pack_done for delete
+  using (i_am_parent() and exists (select 1 from pack_items p where p.id = item_id and p.family_id = my_family()));
+grant select, insert, update, delete on pack_items to authenticated;
+grant select, insert, delete on pack_done to authenticated;
+
+-- "Who is this phone calendar about" (e.g. Aula -> Carl). Events from it that
+-- nobody has tagged yet get the same names now; new ones at the next sync.
+create or replace function set_calendar_people(p_id uuid, p_people text[])
+returns void language plpgsql security definer set search_path = public as $$
+declare ppl text[]; old text[];
+begin
+  ppl := array(select distinct left(btrim(x), 40) from unnest(coalesce(p_people, '{}')) x where btrim(x) <> '');
+  if cardinality(ppl) > 12 then raise exception 'too many names'; end if;
+  select people into old from user_calendars where id = p_id and user_id = auth.uid() for update;
+  if not found then raise exception 'calendar not found'; end if;
+  update user_calendars set people = ppl where id = p_id;
+  -- events still carrying the calendar's old default (or none) follow; hand-tagged ones keep theirs
+  update events ev set people = ppl
+   where (ev.people = '{}' or ev.people = old)
+     and (ev.id in (select event_id from event_sources where calendar_id = p_id)
+          or ev.id in (select event_id from calendar_inbox where calendar_id = p_id and event_id is not null));
+end $$;
+revoke execute on function set_calendar_people(uuid, text[]) from public, anon;
+grant execute on function set_calendar_people(uuid, text[]) to authenticated;
