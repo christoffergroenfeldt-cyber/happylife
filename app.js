@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '34'; // keep in step with CACHE in sw.js
+const APP_VERSION = '35'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -489,6 +489,19 @@ function viewHome() {
     .filter(({ ev, st }) => !ev.every_weeks && !ev.lesson && (st.ongoing || (st.days >= 0 && st.days <= ev.remind_days)))
     .sort((a, b) => a.st.days - b.st.days);
 
+  // Snart can be narrowed to one phone calendar (or the events made in the app)
+  const upCals = isParent() ? S.calendars.filter((c) => upcoming.some(({ ev }) => evCalIds(ev).includes(c.id))) : [];
+  let hf = store('hl-homecalf') || 'all';
+  if (hf !== 'all' && hf !== 'own' && !upCals.some((c) => c.id === hf)) hf = 'all';
+  const upIn = (ev) => hf === 'all' || (hf === 'own' ? !ev.imported : evCalIds(ev).includes(hf));
+  const upShown = upcoming.filter(({ ev }) => upIn(ev));
+  const nUp = (fn) => upcoming.filter(({ ev }) => fn(ev)).length;
+  const upcomingChips = upCals.length ? `<div class="kind-chips cal-chips">
+      <button class="hchip ${hf === 'all' ? 'on' : ''}" data-act="homeCalFilter" data-id="all">${esc(t('calFilterAll'))} (${upcoming.length})</button>
+      ${nUp((ev) => !ev.imported) ? `<button class="hchip ${hf === 'own' ? 'on' : ''}" data-act="homeCalFilter" data-id="own">✏️ ${esc(t('calFilterOwn'))} (${nUp((ev) => !ev.imported)})</button>` : ''}
+      ${upCals.map((c) => `<button class="hchip ${hf === c.id ? 'on' : ''}" data-act="homeCalFilter" data-id="${c.id}">${calDot(c.id)}${esc(c.name)} (${nUp((ev) => evCalIds(ev).includes(c.id))})</button>`).join('')}
+    </div>` : '';
+
   const all = S.tasks.map((task) => ({ task, st: taskState(task) })).filter(({ st }) => st.active && !st.done);
   // Free tasks nobody has taken yet: daily chores, family tasks, then rooms inside and outside
   const zoneRank = (task) => (!isHouse(task) ? 1 : { daily: 0, in: 2, out: 3 }[zoneOf(byId(S.places, task.place_id) || {})] ?? 2);
@@ -515,14 +528,16 @@ function viewHome() {
     ${pointsCard()}
     ${famdayCard(true)}
     ${free.length ? `<h2>${esc(t('freeTasks'))}</h2>
-      <div class="list">${free.slice(0, FIRST).map(row).join('')}</div>
+      <div class="list cols">${free.slice(0, FIRST).map(row).join('')}</div>
       ${free.length > FIRST ? `<details class="more"><summary>${esc(t('showAll'))} (${free.length})</summary>
-        <div class="list">${free.slice(FIRST).map(row).join('')}</div></details>` : ''}` : ''}
+        <div class="list cols">${free.slice(FIRST).map(row).join('')}</div></details>` : ''}` : ''}
     <h2>${esc(t('upcoming'))}</h2>
+    ${upcomingChips}
     ${plannedSoon.map(plannedRow).join('')}
-    ${upcoming.length ? upcoming.map(({ ev, st }) => eventRow(ev, st)).join('') : plannedSoon.length ? '' : `<p class="empty">${esc(t('noUpcoming'))}</p>`}
+    ${upShown.length ? `<div class="list cols">${upShown.map(({ ev, st }) => eventRow(ev, st)).join('')}</div>`
+      : plannedSoon.length ? '' : `<p class="empty">${esc(t('noUpcoming'))}</p>`}
     <h2>${esc(t('myToday'))}</h2>
-    ${mine.length ? `<div class="list">${mine.map(row).join('')}</div>`
+    ${mine.length ? `<div class="list cols">${mine.map(row).join('')}</div>`
                   : `<p class="empty">${esc(t('nothingToday'))}</p>`}
     ${due.length ? `<h2>${esc(t('timeFor'))}</h2>${pick}${shown.map(({ tr, st }) => momentCard(tr, st, true)).join('')}` : ''}
     ${!due.length && !mine.length && !free.length ? `<p class="allgood">${esc(t('allGood'))}</p>` : ''}`;
@@ -2024,7 +2039,7 @@ function eventRow(ev, st) {
     <div class="row event" data-act="editEvent" data-id="${ev.id}">
       <div class="lead big">${eventIcon(ev.type)}</div>
       <div class="body"><div class="ttl">${esc(ev.title)}${years}</div>
-        <div class="meta">${esc(range)}${when ? ` · <strong>${esc(when)}</strong>` : ''}${ev.imported ? ` · 📱${evCalIds(ev).map((c) => ` ${calDot(c)}${esc(calName(c))}`).join(',')}` : ''}${nTasks ? ` · ✅ ${esc(t('nTasks', nTasks))}` : ''}</div></div>
+        <div class="meta">${esc(range)}${when ? ` · <strong>${esc(when)}</strong>` : ''}${ev.imported ? ` · ${evCalIds(ev).map((c) => calDot(c)).join('')}` : ''}${nTasks ? ` · ✅ ${esc(t('nTasks', nTasks))}` : ''}</div></div>
     </div>`;
 }
 
@@ -2541,6 +2556,7 @@ const ACTIONS = {
   setupZone: (id) => { S.setupZone = id; render(); window.scrollTo(0, 0); },
   momentTab: (id) => { S.momentTab = id; render(); window.scrollTo(0, 0); },
   calFilter: (id) => { store('hl-calf', id); render(); },
+  homeCalFilter: (id) => { store('hl-homecalf', id); render(); },
   seedHouse: async () => { await run(sb.rpc('seed_house')); await refresh(); },
   // "Done!" straight away: take it (if not already) and tick it in one go
   houseDone: async (id) => {

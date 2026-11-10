@@ -567,3 +567,6 @@ button.row.skema-link { width: 100%; text-align: left; align-items: center; curs
 .pack-tile b { font-size: .9rem; line-height: 1.2; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pack-tile small { font-size: .75rem; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bag .subhead + .pack-tiles { margin-top: 2px; }
+/* event rows: the calendar shows as its colour dot (the filter chips above name them) */
+.list.cols .row.event { padding: 10px 12px; gap: 10px; }
+.list.cols .row.event .lead.big { font-size: 1.2rem; }
