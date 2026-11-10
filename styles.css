@@ -508,3 +508,4 @@ button.row.skema-link { width: 100%; text-align: left; align-items: center; curs
 .sk-free { text-align: center; color: var(--muted); padding: 6px 0; }
 .sk-hide .hchip.hidden-subj { opacity: .55; text-decoration: line-through; }
 .sk-hide .hchip small { opacity: .7; margin-left: 2px; }
+.kind-chips.sk-hide { flex-wrap: wrap; overflow: visible; margin: 8px 0 0; padding: 0; }
