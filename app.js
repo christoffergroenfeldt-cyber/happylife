@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '35'; // keep in step with CACHE in sw.js
+const APP_VERSION = '36'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -343,6 +343,18 @@ function render() {
       <button data-act="tab" data-id="${k}" class="${S.tab === k ? 'on' : ''}">
         <span class="ico">${icons[k]}</span><span>${esc(t('tabs.' + k))}</span></button>`).join('')}
     </nav>`;
+  keepChipsInView();
+}
+
+// A sideways-scrolling row of chips is redrawn on every tap; bring the chosen
+// chip back into view (centred) instead of jumping back to the start
+function keepChipsInView() {
+  document.querySelectorAll('.kind-chips').forEach((row) => {
+    const on = row.querySelector('.hchip.on');
+    if (!on || row.scrollWidth <= row.clientWidth) return;
+    const shift = on.getBoundingClientRect().left - row.getBoundingClientRect().left;
+    row.scrollLeft = Math.max(0, row.scrollLeft + shift - (row.clientWidth - on.offsetWidth) / 2);
+  });
 }
 
 function langPicker() {
