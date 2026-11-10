@@ -12,7 +12,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '27'; // keep in step with CACHE in sw.js
+const APP_VERSION = '28'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -49,6 +49,7 @@ const S = {
   find: null, nearby: null, nearbyMeta: null, findItems: [],
   packs: [], packDone: [], todayDay: null,
   fdReady: false, fdOrder: [], fdIdeas: [], fdWeeks: [],
+  skemaWho: null, skemaWeek: null, skemaDay: null,
   tab: 'home', authStep: 'email', authEmail: '', setupMode: pendingInvite() ? 'join' : 'create', ideaShift: {}, pushOn: false,
 };
 
@@ -476,7 +477,7 @@ function viewHome() {
   // Events within their reminder window
   const upcoming = S.events
     .map((ev) => ({ ev, st: eventStatus(ev, td) }))
-    .filter(({ ev, st }) => !ev.every_weeks && (st.ongoing || (st.days >= 0 && st.days <= ev.remind_days)))
+    .filter(({ ev, st }) => !ev.every_weeks && !ev.lesson && (st.ongoing || (st.days >= 0 && st.days <= ev.remind_days)))
     .sort((a, b) => a.st.days - b.st.days);
 
   const all = S.tasks.map((task) => ({ task, st: taskState(task) })).filter(({ st }) => st.active && !st.done);
@@ -621,7 +622,7 @@ function dayEventRow(ev, date, withDate) {
 // Events in the next AHEAD days after date d (weekly series are left out – they show on their day)
 function comingUp(d, test) {
   const from = addDays(d, 1);
-  return S.events.filter((ev) => !ev.every_weeks && test(ev))
+  return S.events.filter((ev) => !ev.every_weeks && !ev.lesson && test(ev))
     .map((ev) => ({ ev, st: eventStatus(ev, from) }))
     .filter(({ st }) => st.ongoing || (st.days >= 0 && st.days < AHEAD))
     .map(({ ev, st }) => ({ ev, date: st.ongoing ? from : st.date }))
@@ -662,7 +663,7 @@ function viewToday() {
 
   // 2. What happens that day
   const fdRow = S.fdWeeks.find((w) => w.on_date === d && w.title && !w.cancelled);
-  const program = S.events.filter((ev) => occursOn(ev, d))
+  const program = S.events.filter((ev) => !ev.lesson && occursOn(ev, d))
     .sort((a, b) => (timeOf(a) || '00').localeCompare(timeOf(b) || '00'));
 
   // 3. My tasks (today only)
@@ -679,6 +680,7 @@ function viewToday() {
 
   return `${head}${bag}${famdayCard(true)}
     <h2>📅 ${esc(t(isToday ? 'td.program' : 'td.programTomorrow'))}</h2>
+    ${skemaLink(d)}
     ${fdRow ? `<div class="list fd-today"><div class="row dayev" data-act="fdPick" data-id="${fdRow.week_start}"><div class="when time">${fdRow.at_time ? `<b>${esc(fdRow.at_time)}</b>` : `<small>${esc(t('td.allDay'))}</small>`}</div>
       <div class="body"><div class="ttl">${esc(fdRow.emoji || '🎉')} ${esc(t('fd.title'))}: ${esc(fdRow.title)}</div><div class="meta">${esc(t('fd.chosenBy', { name: personLabel(fdRow.chooser) }))}</div></div></div></div>` : ''}
     ${program.length ? `<div class="list">${program.map((ev) => dayEventRow(ev, d, false)).join('')}</div>` : fdRow ? '' : `<p class="empty">${esc(t('td.noProgram'))}</p>`}
@@ -788,6 +790,57 @@ function calPeopleForm(cal) {
     await run(sb.rpc('set_calendar_people', { p_id: cal.id, p_people: pickedPeople(form, 'people') }));
     closeDialog(); await refresh();
   };
+}
+
+// ------------------------------------------------------------ skema (school timetable)
+// Lessons from calendars marked Skema, one child at a time, as a week grid.
+// They are left out of every other list; the Today page links here instead.
+
+const lessons = () => S.events.filter((ev) => ev.lesson);
+const lessonsOn = (d, who) => lessons().filter((ev) => occursOn(ev, d) && (!who || (ev.people || []).includes(who)))
+  .sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
+const skemaKids = () => [...new Set(lessons().flatMap((ev) => ev.people || []))].filter(isKidTag).sort((a, b) => a.localeCompare(b));
+
+function isoWeek(iso) {
+  const th = addDays(weekStart(iso), 3);
+  return Math.floor(daysBetween(`${th.slice(0, 4)}-01-01`, th) / 7) + 1;
+}
+
+// Today page: one line per child instead of the lessons
+function skemaLink(d) {
+  const kids = skemaKids().map((k) => ({ k, n: lessonsOn(d, k) })).filter((x) => x.n.length);
+  if (!kids.length) return '';
+  return `<button class="row skema-link" data-act="openSkema" data-id="${d}">
+    <span class="lead big">📚</span>
+    <span class="body"><span class="ttl">${esc(t('sk.title'))}</span>
+      <span class="meta">${kids.map(({ k, n }) => `<b>${esc(personLabel(k))}</b> ${esc(t('sk.lessons', { n: n.length, t: n[0].start_time || '' }))}`).join(' · ')}</span></span>
+    <span class="icon">›</span></button>`;
+}
+
+function viewSkema() {
+  const kids = skemaKids();
+  if (!S.skemaWho || !kids.includes(S.skemaWho)) S.skemaWho = kids[0] || null;
+  const td = today();
+  const ws = S.skemaWeek || weekStart(td);
+  const days = [0, 1, 2, 3, 4, 5, 6].map((i) => addDays(ws, i));
+  const cols = days.map((d) => ({ d, list: lessonsOn(d, S.skemaWho) }))
+    .filter((c, i) => i < 5 || c.list.length);
+  const back = `<div class="toolbar"><button data-act="calView" data-id="list">‹ ${t('tabs.calendar')}</button></div>`;
+  if (!kids.length) return `${back}<p class="empty">${esc(t('sk.none'))}</p>`;
+  const sel = S.skemaDay;
+  return `${back}
+    <div class="kind-chips">${kids.map((k) => `<button class="hchip ${k === S.skemaWho ? 'on' : ''}" data-act="skemaWho" data-id="${esc(k)}">${esc(personLabel(k))}</button>`).join('')}</div>
+    <div class="sk-nav"><button class="icon" data-act="skemaWeek" data-id="-7" aria-label="‹">‹</button>
+      <b>${esc(t('sk.week', { n: isoWeek(ws) }))}</b> <span class="meta">${esc(fmtDay(ws, { day: 'numeric', month: 'short' }))} – ${esc(fmtDay(addDays(ws, 4), { day: 'numeric', month: 'short' }))}</span>
+      <button class="icon" data-act="skemaWeek" data-id="7" aria-label="›">›</button>
+      ${ws !== weekStart(td) ? `<button class="small" data-act="skemaWeek" data-id="0">${esc(t('td.today'))}</button>` : ''}</div>
+    <div class="sk-grid" style="grid-template-columns:repeat(${cols.length},1fr)">${cols.map(({ d, list }) => `
+      <div class="sk-col ${d === td ? 'today' : ''} ${d === sel ? 'sel' : ''}">
+        <div class="sk-day">${esc(fmtDay(d, { weekday: 'short' }))}<small>${esc(fmtDay(d, { day: 'numeric' }))}</small></div>
+        ${list.length ? list.map((ev) => `<div class="sk-l"><small>${esc(ev.start_time || '')}</small><b>${esc(ev.title)}</b></div>`).join('')
+          : `<div class="sk-free">–</div>`}
+      </div>`).join('')}</div>
+    <p class="hint">${esc(t('sk.help'))}</p>`;
 }
 
 // ------------------------------------------------------------ family day (Familiedag)
@@ -1957,6 +2010,7 @@ function weeklyLabel(ev, st) {
 
 function viewCalendar() {
   if (S.calView === 'find' && isParent()) return viewFind();
+  if (S.calView === 'skema') return viewSkema();
   const td = today();
   // Filter by calendar: all, made in the app, or one of my phone calendars
   const cals = isParent() ? S.calendars.filter((c) => S.events.some((ev) => evCalIds(ev).includes(c.id))) : [];
@@ -1969,7 +2023,7 @@ function viewCalendar() {
       ${count((ev) => !ev.imported) ? `<button class="hchip ${cf === 'own' ? 'on' : ''}" data-act="calFilter" data-id="own">✏️ ${esc(t('calFilterOwn'))} (${count((ev) => !ev.imported)})</button>` : ''}
       ${cals.map((c) => `<button class="hchip ${cf === c.id ? 'on' : ''}" data-act="calFilter" data-id="${c.id}">${calDot(c.id)}${esc(c.name)} (${count((ev) => evCalIds(ev).includes(c.id))})</button>`).join('')}
     </div>` : '';
-  const all = S.events.filter(inFilter).map((ev) => ({ ev, st: eventStatus(ev, td) }));
+  const all = S.events.filter((ev) => !ev.lesson && inFilter(ev)).map((ev) => ({ ev, st: eventStatus(ev, td) }));
   // weekly series (lessons etc.) get their own folded section, so they don't crowd the list
   const weekly = all.filter(({ ev, st }) => ev.every_weeks && st.days >= 0).sort((a, b) => a.st.days - b.st.days);
   const list = all.filter((x) => !weekly.includes(x));
@@ -1981,7 +2035,8 @@ function viewCalendar() {
   const nNew = findNewCount();
   const findBtn = isParent() && (S.inbox.length || S.calendars.some((c) => c.pick))
     ? `<button data-act="calView" data-id="find">🔍 ${t('findEvents')}${nNew ? ` <span class="badge">${nNew}</span>` : ''}</button>` : '';
-  return `<div class="toolbar"><button class="primary" data-act="newEvent">＋ ${t('newEvent')}</button>${findBtn}</div>
+  const skemaBtn = lessons().length ? `<button data-act="openSkema" data-id="">📚 ${t('sk.title')}</button>` : '';
+  return `<div class="toolbar"><button class="primary" data-act="newEvent">＋ ${t('newEvent')}</button>${skemaBtn}${findBtn}</div>
     ${chips}
     ${isParent() && S.events.length ? `<p class="hint">${esc(t('tapEventForTasks'))}</p>` : ''}
     ${future.length ? `<div class="list">${future.map(({ ev, st }) => eventRow(ev, st)).join('')}</div>` : `<p class="empty">${esc(t('noEvents'))}</p>`}
@@ -2332,6 +2387,9 @@ function calendarSection() {
             <label class="yearly ${mode === 'on' ? '' : 'off'}"><span>${esc(t('calYearly'))}</span>
               <button type="button" class="switch ${c.yearly ? 'on' : ''}" data-act="calToggle" data-id="${c.id}|yearly"
                 role="switch" aria-checked="${c.yearly}" aria-label="${esc(t('calYearly'))} ${esc(c.name)}" ${mode === 'on' ? '' : 'disabled'}></button></label>
+            <label class="yearly ${mode === 'off' ? 'off' : ''}"><span>📚 ${esc(t('sk.title'))}</span>
+              <button type="button" class="switch ${c.schedule ? 'on' : ''}" data-act="calSchedule" data-id="${c.id}"
+                role="switch" aria-checked="${!!c.schedule}" aria-label="${esc(t('sk.title'))} ${esc(c.name)}" ${mode === 'off' ? 'disabled' : ''}></button></label>
           </div>`; }).join('')}</div>
           <p class="hint">${esc(t('calListHelp'))}</p>` : ''}
         <div class="acts">
@@ -2543,6 +2601,17 @@ const ACTIONS = {
   },
   calPeople: (id) => calPeopleForm(byId(S.calendars, id)),
   fdPick: (ws) => fdPickForm(ws),
+  openSkema: (d) => {
+    S.tab = 'calendar'; S.calView = 'skema'; S.skemaDay = d || null;
+    S.skemaWeek = weekStart(d || today()); render(); window.scrollTo(0, 0);
+  },
+  skemaWho: (k) => { S.skemaWho = k; render(); },
+  skemaWeek: (n) => { S.skemaWeek = Number(n) ? addDays(S.skemaWeek || weekStart(today()), Number(n)) : weekStart(today()); S.skemaDay = null; render(); },
+  calSchedule: async (id) => {
+    const c = byId(S.calendars, id);
+    await run(sb.rpc('set_calendar_schedule', { p_id: id, p_on: !c.schedule }));
+    await refresh();
+  },
   fdSetup: () => fdSetupForm(),
   fdPass: async (ws) => { await fdSave(ws, { chooser: fdNext(fdChooser(ws)) }); await refresh(); },
   fdCancel: async (ws) => { if (!confirm(t('fd.cancelConfirm'))) return; await fdSave(ws, { cancelled: true }); await refresh(); },

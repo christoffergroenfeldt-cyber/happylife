@@ -1605,3 +1605,70 @@ drop policy if exists fw_delete on famday_weeks;
 create policy fw_delete on famday_weeks for delete using (family_id = my_family() and i_am_parent());
 grant select, insert, update on famday to authenticated;
 grant select, insert, update, delete on famday_ideas, famday_weeks to authenticated;
+
+-- ================================================================ skema
+-- Lessons (school timetable) are shown on Kalender → Skema only, not in the day
+-- lists. A phone calendar marked Skema (on by default for names like "Skema" or
+-- "AULA") makes its lessons: timed, one day, and a weekly series or a short
+-- subject code (DAN, MAT, FRA1 …). Kept up to date by triggers, so the sync
+-- itself doesn't need to know.
+alter table user_calendars add column if not exists schedule boolean not null default false;
+alter table events add column if not exists lesson boolean not null default false;
+
+create or replace function is_lesson(p_title text, p_start date, p_end date, p_time text, p_every smallint)
+returns boolean language sql immutable set search_path = public as $$
+  select p_time is not null and (p_end is null or p_end <= p_start)
+     and (p_every is not null or char_length(btrim(p_title)) <= 8)
+$$;
+
+-- new calendars named like a timetable start as Skema
+create or replace function uc_schedule_default() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  new.schedule := new.schedule or new.name ~* '(skema|aula|timetable|schedule|emploi du temps|stundenplan)';
+  return new;
+end $$;
+drop trigger if exists uc_schedule_default on user_calendars;
+create trigger uc_schedule_default before insert on user_calendars for each row execute function uc_schedule_default();
+
+-- an event's lesson flag, from its calendars
+create or replace function event_lesson_calc(ev events) returns boolean
+language sql stable security definer set search_path = public as $$
+  select is_lesson(ev.title, ev.start_date, ev.end_date, ev.start_time, ev.every_weeks)
+     and exists (select 1 from event_sources es join user_calendars uc on uc.id = es.calendar_id
+                  where es.event_id = ev.id and uc.schedule)
+$$;
+create or replace function events_lesson() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.imported then new.lesson := event_lesson_calc(new); else new.lesson := false; end if;
+  return new;
+end $$;
+drop trigger if exists events_lesson on events;
+create trigger events_lesson before update of title, start_date, end_date, start_time, every_weeks, imported on events
+  for each row execute function events_lesson();
+-- a new event gets its calendar right after it is inserted
+create or replace function event_sources_lesson() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  update events ev set lesson = event_lesson_calc(ev) where ev.id = new.event_id;
+  return null;
+end $$;
+drop trigger if exists event_sources_lesson on event_sources;
+create trigger event_sources_lesson after insert on event_sources for each row execute function event_sources_lesson();
+
+-- Switch a calendar's Skema flag; its lessons move at once
+create or replace function set_calendar_schedule(p_id uuid, p_on boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update user_calendars set schedule = coalesce(p_on, false) where id = p_id and user_id = auth.uid();
+  if not found then raise exception 'calendar not found'; end if;
+  update events ev set lesson = event_lesson_calc(ev)
+   where ev.id in (select event_id from event_sources where calendar_id = p_id);
+end $$;
+revoke execute on function is_lesson(text, date, date, text, smallint), event_lesson_calc(events),
+  uc_schedule_default(), events_lesson(), event_sources_lesson() from public, anon, authenticated;
+revoke execute on function set_calendar_schedule(uuid, boolean) from public, anon;
+grant execute on function set_calendar_schedule(uuid, boolean) to authenticated;
+
+update events ev set lesson = event_lesson_calc(ev) where ev.imported and ev.lesson <> event_lesson_calc(ev);

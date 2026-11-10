@@ -491,3 +491,18 @@ button.cal-who { flex: none; max-width: 55%; overflow: hidden; text-overflow: el
 .fd-newidea { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .fd-newidea .em { width: 3.2em; }
 .fd-newidea #fdIdeaTitle { flex: 1 1 60%; }
+
+/* ---------- skema ---------- */
+button.row.skema-link { width: 100%; text-align: left; align-items: center; cursor: pointer; margin-bottom: 8px; font: inherit; color: inherit; }
+.skema-link .body { display: flex; flex-direction: column; }
+.sk-nav { display: flex; align-items: center; gap: 8px; margin: 12px 0 10px; flex-wrap: wrap; }
+.sk-grid { display: grid; gap: 4px; }
+.sk-col { background: var(--surface); border-radius: 12px; padding: 6px 4px; min-width: 0; box-shadow: var(--shadow); }
+.sk-col.today { outline: 2px solid var(--sun3); }
+.sk-col.sel { background: color-mix(in srgb, var(--sun2) 55%, var(--surface)); }
+.sk-day { text-align: center; font-weight: 800; font-size: .8rem; text-transform: capitalize; margin-bottom: 4px; color: var(--head); }
+.sk-day small { display: block; font-weight: 600; color: var(--muted); }
+.sk-l { display: flex; flex-direction: column; padding: 4px 3px; border-top: 1px solid var(--line); line-height: 1.15; }
+.sk-l small { font-size: .68rem; color: var(--muted); }
+.sk-l b { font-size: .8rem; overflow-wrap: anywhere; }
+.sk-free { text-align: center; color: var(--muted); padding: 6px 0; }

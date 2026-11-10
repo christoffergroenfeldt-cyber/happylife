@@ -4,14 +4,15 @@ A family web app (installable on iPhone from Safari) for daily tasks, plans for 
 children, family tasks anyone can take, house chores per room, vacations and anniversaries, and "moments"
 between husband and wife with reminders when it's time again.
 
-Danish, English and French – switch on the login screen or under **Family → Language**.
+Danish, English and French – switch on the login screen or under **Setup → Language**.
 
 ## How it works
 
 | Area | What it does |
 |---|---|
 | **Roles** | Each person has one or more roles: child, mother, father, husband, wife. Everything is assigned to roles or people, and the database only returns what your roles may see. |
-| **Today** ☀️ | The husband's morning page (shown to anyone with the *husband* role, and where the app opens for him). **In the bag** – what each child must bring that day (fixed weekdays like PE kit on Tuesday, one date, or tied to a calendar event such as a costume for the school show), ticked off as packed and shared with the other parent; from 15:00 it shows tomorrow. Then the day's plan with times, his own tasks, and the next 30 days **for the kids** and **for his wife**, plus birthdays and anniversaries. An event belongs to a person through **Who is it about?** on the event, or by default from its phone calendar (Family → Calendar from iPhone → 👤, e.g. *AULA – Victor* → Victor). School/sport/show events show under the kids even without a name; the sync guesses those types from titles like *forældremøde*, *kamp* or *forestilling*. |
+| **Today** ☀️ | The husband's morning page (shown to anyone with the *husband* role, and where the app opens for him). **In the bag** – what each child must bring that day (fixed weekdays like PE kit on Tuesday, one date, or tied to a calendar event such as a costume for the school show), ticked off as packed and shared with the other parent; from 15:00 it shows tomorrow. Then the day's plan with times, his own tasks, and the next 30 days **for the kids** and **for his wife**, plus birthdays and anniversaries. An event belongs to a person through **Who is it about?** on the event, or by default from its phone calendar (Setup → Calendar from iPhone → 👤, e.g. *AULA – Victor* → Victor). School/sport/show events show under the kids even without a name; the sync guesses those types from titles like *forældremøde*, *kamp* or *forestilling*. |
+| **Skema** 📚 | Calendar → Skema: the children's school timetable as a week grid, one child at a time. Lessons come from phone calendars with the 📚 Skema switch on (Setup → Calendar from iPhone; on by default for names with *Skema* or *AULA*): timed one-day events that are a weekly series or a short subject code (DAN, MAT, FRA1). Lessons are left out of every other list; the Today page shows one 📚 line linking here. |
 | **Family day** 🎲 | One outing a week on a day picked each week. Family members take turns choosing (order set under Moments → Family day ⚙️; *my wife* works before she joins). The chooser picks from an idea list – filter ☀️ outdoor / 🌧️ indoor / ⏱ short, each showing when you last did it – or types something new, plus day and time. Shown on Moments always, and on Home and Today from Thursday until it's chosen and in the week it happens. *Let X choose* passes the turn; *None this week* keeps it. |
 | **Plans** | Mother/father create plans (e.g. "Morning routine") with tasks assigned to specific children – daily, weekly, monthly, yearly, once, or every X days. Each child ticks off their own; parents see ✓/○ per child. |
 | **Family tasks** | Open to everyone (or chosen roles), with "people needed". Anyone takes it for the current period; it's full when enough have taken it, and done when a taker ticks it. Like HØBK activities. |
@@ -20,11 +21,11 @@ Danish, English and French – switch on the login screen or under **Family → 
 | **Role tasks** | E.g. a husband-only task – invisible to the wife and children. |
 | **Moments** | "When did I last …" – each with its own reminder interval in days. When the days have passed it appears on Home under *Time for something special* with an idea. Defaults on a new family: flowers + surprise (husband), surprise (wife), out together + trip together (both). |
 | **Family moments** | Moments for the whole family: vacation, takeaway, restaurant, movie, weekend trip, theme park (plus your own). Each shows when you last did it, nudges when it's time again, and can be **planned** with a date and a note (e.g. *Legoland*) – planned ones show on Home in the last 14 days before. Everyone can log one; only parents add, change or plan them. Logging on the planned date clears the plan. |
-| **Calendar** | Vacations, anniversaries, birthdays – typed in, or brought in from the parents' iPhone calendars with a Shortcut (guide: `kalender-guide.html`, opened from Family → Calendar from iPhone). Yearly events show how many years; each shows on Home a chosen number of days before. |
-| **Find events** 🔍 | Busy feeds like Aula, ForældreIntra or a timetable (subscribed on the iPhone) are set to **Pick** under Family → Calendar from iPhone instead of **All**. Their events then wait under **Calendar → Find events**: a list grouped by day with a HØBK-style **Filter** sheet (calendars, period, new/followed/hidden, weekly series on/off; active choices as removable chips, remembered on the phone) and a search box. **Follow** puts an event in the calendar and opens it for tasks; **✕** hides it. If the school moves a followed event or renames it, the event and its tasks follow at the next sync; if it's cancelled, they go. |
+| **Calendar** | Vacations, anniversaries, birthdays – typed in, or brought in from the parents' iPhone calendars with a Shortcut (guide: `kalender-guide.html`, opened from Setup → Calendar from iPhone). Yearly events show how many years; each shows on Home a chosen number of days before. |
+| **Find events** 🔍 | Busy feeds like Aula, ForældreIntra or a timetable (subscribed on the iPhone) are set to **Pick** under Setup → Calendar from iPhone instead of **All**. Their events then wait under **Calendar → Find events**: a list grouped by day with a HØBK-style **Filter** sheet (calendars, period, new/followed/hidden, weekly series on/off; active choices as removable chips, remembered on the phone) and a search box. **Follow** puts an event in the calendar and opens it for tasks; **✕** hides it. If the school moves a followed event or renames it, the event and its tasks follow at the next sync; if it's cancelled, they go. |
 | **Event tasks** | Parents tap an event and add tasks with quick suggestions – e.g. *Buy a present* 7 days before Anna's birthday, *Book a restaurant* 14 days before the anniversary. They repeat every year for yearly events, show on Home 14 days before they're due, and work with reminders and points like other tasks. A child can be given an event task without seeing the event. |
-| **Login codes** | Signed in on one device? Family → *Sign in on another device* makes an 8-character code (valid 10 minutes, works once). On the new device: *Have a login code…?* – no email needed. |
-| **Family** | Invite code, members and roles. Only the admin (whoever created the family) can change roles, so a child can't make themself "wife". |
+| **Login codes** | Signed in on one device? Setup → *Sign in on another device* makes an 8-character code (valid 10 minutes, works once). On the new device: *Have a login code…?* – no email needed. |
+| **Setup** (was Family) | Invite code, members and roles. Only the admin (whoever created the family) can change roles, so a child can't make themself "wife". |
 
 Privacy is enforced in the database (Row Level Security), not just hidden in the app.
 
@@ -81,7 +82,7 @@ Edge Function sends due reminders once, to the people who still have to do the t
    `supabase/functions/remind/index.ts`, deploy (keep **Verify JWT** on).
 3. **SQL Editor**: run `cron.sql` once (runs the function every 5 minutes).
 
-Each person turns notifications on in the app under **Family → Notifications**. On iPhone this
+Each person turns notifications on in the app under **Setup → Notifications**. On iPhone this
 only works when the app is added to the Home Screen and opened from there (iOS 16.4+).
 
 To make new VAPID keys: `npx web-push generate-vapid-keys`, put the public key in
@@ -89,8 +90,8 @@ To make new VAPID keys: `npx web-push generate-vapid-keys`, put the public key i
 
 ### Calendar from iPhone (Shortcut)
 Each parent can bring birthdays and anniversaries in from their iPhone calendars. In the
-app: **Family → Calendar from iPhone → Get started** gives a personal sync code.
-Only events from calendars switched on under Family are saved; for all other calendars only
+app: **Setup → Calendar from iPhone → Get started** gives a personal sync code.
+Only events from calendars switched on under Setup are saved; for all other calendars only
 the calendar *name* is kept (so it can be switched on) – their event titles are discarded
 on arrival. Calendars with names like *Birthdays / Fødselsdage* are on (and yearly) by default.
 Imported events are visible to the parents only, until you change *Visible to*.
