@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '33'; // keep in step with CACHE in sw.js
+const APP_VERSION = '34'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -666,7 +666,7 @@ function viewToday() {
         <div class="list cols">${groups[w].map((x) => packRow(x, d)).join('')}</div>`).join('')
         : `<p class="empty">${esc(t('td.packEmpty'))}</p>`}
       <div class="acts"><button class="small primary" data-act="newPack">＋ ${t('td.addPack')}</button></div>
-      ${S.packs.length ? `<details><summary>${esc(t('td.allPack'))} (${S.packs.length})</summary>${packOverview()}</details>` : ''}
+      ${S.packs.length ? `<h3 class="subhead">${esc(t('td.allPack'))} (${S.packs.length})</h3>${packOverview()}` : ''}
     </div>`;
 
   // 2. What happens that day
@@ -712,9 +712,10 @@ function packOverview() {
     const ev = byId(S.events, x.event_id);
     return ev ? `${eventIcon(ev.type)} ${ev.title}` : '';
   };
-  return `<div class="list">${S.packs.slice().sort((a, b) => (a.who || '~').localeCompare(b.who || '~') || a.title.localeCompare(b.title)).map((x) => `
-    <div class="row" data-act="editPack" data-id="${x.id}"><div class="body"><div class="ttl">${esc(x.title)}</div>
-      <div class="meta">${esc(x.who || t('td.everyone'))} · ${esc(whenOf(x))}</div></div><span class="icon">✎</span></div>`).join('')}</div>`;
+  // small tiles, as many across as fit; tap one to change it
+  return `<div class="pack-tiles">${S.packs.slice().sort((a, b) => (a.who || '~').localeCompare(b.who || '~') || a.title.localeCompare(b.title)).map((x) => `
+    <button type="button" class="pack-tile" data-act="editPack" data-id="${x.id}">
+      <b>${esc(x.title)}</b><small>${esc(x.who || t('td.everyone'))} · ${esc(whenOf(x))}</small></button>`).join('')}</div>`;
 }
 
 // preset: { event_id } when started from an event
