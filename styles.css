@@ -539,3 +539,23 @@ button.row.skema-link { width: 100%; text-align: left; align-items: center; curs
 .hero-home .hero-art { width: 58px; height: 52px; background: var(--sky); border-radius: 14px; overflow: hidden; }
 .top.hero .refresh { flex: none; margin: 0; }
 @media (prefers-color-scheme: dark) { .hero-art svg { filter: brightness(.72) saturate(.85); } }
+
+/* ---------- compact rows: one line, tap for more; two columns where there is room ---------- */
+.one { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row.compact { display: block; padding: 0; }
+.row.compact > summary { display: flex; align-items: center; gap: 10px; padding: 9px 10px 9px 12px; list-style: none; cursor: pointer; }
+.row.compact > summary::-webkit-details-marker { display: none; }
+.row.compact .body { flex: 1; min-width: 0; }
+.row.compact .more { padding: 0 12px 10px; }
+.row.compact .more .acts { margin-top: 6px; }
+.row.compact[open] > summary .meta.one { white-space: normal; }
+.row.hrow.is-mine { box-shadow: inset 0 0 0 2px var(--leaf-line); }
+.card .list .row { box-shadow: none; background: var(--leaf); }
+.card.place { padding: 12px; }
+.card.place h3 { margin-bottom: 8px; }
+.row.dayev { padding: 8px 12px; gap: 10px; align-items: center; }
+.row.dayev .when { width: 40px; }
+.meta.one .chip { font-size: .72rem; padding: 0 7px; margin-right: 5px; vertical-align: 1px; }
+@media (min-width: 540px) {
+  .list.cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: start; }
+}

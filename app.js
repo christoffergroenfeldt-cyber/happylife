@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '32'; // keep in step with CACHE in sw.js
+const APP_VERSION = '33'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -617,13 +617,13 @@ function dayEventRow(ev, date, withDate) {
   const when = withDate ? `<div class="when"><b>${esc(fmtDay(date, { day: 'numeric' }))}</b><small>${esc(fmtDay(date, { month: 'short' }))}</small></div>`
     : `<div class="when time">${timeOf(ev) ? `<b>${esc(timeOf(ev))}</b>` : `<small>${esc(t('td.allDay'))}</small>`}</div>`;
   const meta = [];
-  if (withDate) meta.push(`${cap(fmtDay(date, { weekday: 'long' }))}${timeOf(ev) ? ` ${timeOf(ev)}` : ''}`);
+  if (withDate) meta.push(esc(`${cap(fmtDay(date, { weekday: 'short' }))}${timeOf(ev) ? ` ${timeOf(ev)}` : ''}`));
   if (withDate && days > 0) meta.push(`<strong>${esc(t('inDays', days))}</strong>`);
+  if (packs.length) meta.push(`🎒 ${esc(packs.join(', '))}`);
   return `<div class="row event dayev" data-act="editEvent" data-id="${ev.id}">
     ${when}
-    <div class="body"><div class="ttl">${eventIcon(ev.type)} ${esc(ev.title)}</div>
-      <div class="meta">${meta.map((m) => (m.startsWith('<') ? m : esc(m))).join(' · ')}</div>
-      ${(ev.people || []).length || packs.length ? `<div class="takers">${whoChips(ev)}${packs.length ? `<span class="chip pack">🎒 ${esc(packs.join(', '))}</span>` : ''}</div>` : ''}
+    <div class="body"><div class="ttl one">${esc(ev.title)}</div>
+      ${meta.length || (ev.people || []).length ? `<div class="meta one">${whoChips(ev)}${meta.join(' · ')}</div>` : ''}
     </div></div>`;
 }
 
@@ -640,7 +640,7 @@ function comingUp(d, test) {
 function comingList(rows, emptyKey) {
   const FIRST = 6;
   if (!rows.length) return `<p class="empty">${esc(t(emptyKey))}</p>`;
-  const html = (list) => `<div class="list">${list.map(({ ev, date }) => dayEventRow(ev, date, true)).join('')}</div>`;
+  const html = (list) => `<div class="list cols">${list.map(({ ev, date }) => dayEventRow(ev, date, true)).join('')}</div>`;
   return html(rows.slice(0, FIRST)) + (rows.length > FIRST
     ? `<details class="more"><summary>${esc(t('showAll'))} (${rows.length})</summary>${html(rows.slice(FIRST))}</details>` : '');
 }
@@ -663,7 +663,7 @@ function viewToday() {
       <div class="bag-head"><h2>🎒 ${esc(t('td.pack'))}</h2>
         ${packs.length ? `<span class="chip ${nDone === packs.length ? 'yes' : ''}">${nDone}/${packs.length}</span>` : ''}</div>
       ${packs.length ? order.map((w) => `<h3 class="subhead">${esc(w || t('td.everyone'))}</h3>
-        <div class="list">${groups[w].map((x) => packRow(x, d)).join('')}</div>`).join('')
+        <div class="list cols">${groups[w].map((x) => packRow(x, d)).join('')}</div>`).join('')
         : `<p class="empty">${esc(t('td.packEmpty'))}</p>`}
       <div class="acts"><button class="small primary" data-act="newPack">＋ ${t('td.addPack')}</button></div>
       ${S.packs.length ? `<details><summary>${esc(t('td.allPack'))} (${S.packs.length})</summary>${packOverview()}</details>` : ''}
@@ -1406,22 +1406,22 @@ function viewHouse() {
 
 function houseRow(task, st, withPlace = false) {
   const chore = byId(S.chores, task.chore_id);
-  const meta = [recLabel(task)];
-  if (task.points) meta.push(`⭐ ${t('pointsN', task.points)}`);
+  const meta = [];
   if (st.end && !st.done && task.recurrence !== 'daily') meta.push(t('dueBy', { date: fmtDate(st.end, getLang()) }));
   if (!st.done) { const ld = lastDone(task); meta.push(ld ? `${lastAgo(ld)} (${memberName(ld.done_by)})` : t('house.never')); }
-  let acts;
+  if (task.points) meta.push(`⭐ ${task.points}`);
+  // the quick action on the right: a tick (or who did it)
+  let quick;
+  let more = '';
   if (st.done) {
-    acts = `<span class="chip yes">✓ ${st.doneRows.map((d) => esc(memberName(d.done_by))).join(', ')}</span>
-      ${st.doneByMe ? `<button class="link" data-act="undo" data-id="${task.id}">${t('undo')}</button>` : ''}`;
-  } else if (st.took) {
-    acts = `<button class="small primary" data-act="done" data-id="${task.id}">${t('house.didIt')}</button>
-      <button class="small" data-act="untake" data-id="${task.id}">${t('untake')}</button>`;
-  } else if (st.full) {
-    acts = `<span class="chip">${t('full')}</span>`;
+    quick = `<span class="chip yes">✓ ${st.doneRows.map((d) => esc(memberName(d.done_by))).join(', ')}</span>`;
+    if (st.doneByMe) more = `<button class="small" data-act="undo" data-id="${task.id}">${t('undo')}</button>`;
+  } else if (st.full && !st.took) {
+    quick = `<span class="chip">${t('full')}</span>`;
   } else {
-    acts = `<button class="small primary" data-act="houseDone" data-id="${task.id}">${t('house.didIt')}</button>
-      <button class="small" data-act="take" data-id="${task.id}">${t('house.illDoIt')}</button>`;
+    quick = `<button class="tick" data-act="${st.took ? 'done' : 'houseDone'}" data-id="${task.id}" aria-label="${esc(t('house.didIt'))}"></button>`;
+    more = st.took ? `<button class="small" data-act="untake" data-id="${task.id}">${t('untake')}</button>`
+      : `<button class="small" data-act="take" data-id="${task.id}">${t('house.illDoIt')}</button>`;
   }
   const takers = !st.done && st.takers.length
     ? `<div class="takers">${esc(t('takenBy'))}: ${st.takers.map((u) => `<span class="chip">${esc(memberName(u))}</span>`).join('')}
@@ -1429,15 +1429,21 @@ function houseRow(task, st, withPlace = false) {
   const pl = byId(S.places, task.place_id);
   const where = withPlace && pl && !pl.daily ? `<span class="where">${esc(pl.name)}</span> ` : '';
   return `
-    <div class="row hrow ${st.done ? 'is-done' : ''}">
-      <div class="body">
-        <div class="ttl">${where}${esc(chore?.name || task.title)}</div>
+    <details class="row hrow compact ${st.done ? 'is-done' : ''} ${st.took && !st.done ? 'is-mine' : ''}">
+      <summary>
+        <div class="body">
+          <div class="ttl">${where}${esc(chore?.name || task.title)}</div>
+          <div class="meta one">${meta.map(esc).join(' · ')}</div>
+        </div>
+        ${quick}
+      </summary>
+      <div class="more">
+        <div class="meta">${esc(recLabel(task))}</div>
         ${task.notes ? `<div class="notes">${esc(task.notes)}</div>` : ''}
-        <div class="meta">${meta.map(esc).join(' · ')}</div>
         ${takers}
-        <div class="acts">${acts}</div>
+        ${more ? `<div class="acts">${more}</div>` : ''}
       </div>
-    </div>`;
+    </details>`;
 }
 
 // House zones: daily chores (no room), indoor rooms, outdoor areas
@@ -1459,17 +1465,17 @@ function houseTodo() {
     const rows = open.filter((x) => x.task.place_id === p.id).sort(byChore);
     if (!rows.length) return '';
     return `<div class="card place">${zone === 'daily' ? '' : `<h3>${esc(p.name)}</h3>`}
-      <div class="list">${rows.map(({ task, st }) => houseRow(task, st)).join('')}</div></div>`;
+      <div class="list cols">${rows.map(({ task, st }) => houseRow(task, st)).join('')}</div></div>`;
   }).join('');
   const sections = ZONES.map((z) => [z, placeCards(z)]).filter(([, html]) => html);
   const withPlace = (list) => list.map(({ task, st }) => houseRow(task, st, true)).join('');
 
   return `
-    ${mineNow.length ? `<h2>${esc(t('house.mineNow'))}</h2><div class="list">${withPlace(mineNow)}</div>` : ''}
+    ${mineNow.length ? `<h2>${esc(t('house.mineNow'))}</h2><div class="list cols">${withPlace(mineNow)}</div>` : ''}
     ${!sections.length ? `<p class="allgood">${esc(t('house.nothing'))}</p>` : ''}
     ${sections.map(([z, html]) => `<h2>${ZONE_ICON[z]} ${esc(zoneLabel(z))}</h2>${html}`).join('')}
     ${doneNow.length ? `<details><summary>${esc(t('house.doneNow'))} (${doneNow.length})</summary>
-      <div class="list">${withPlace(doneNow)}</div></details>` : ''}`;
+      <div class="list cols">${withPlace(doneNow)}</div></details>` : ''}`;
 }
 
 function houseSetup() {
