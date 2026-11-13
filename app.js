@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '38'; // keep in step with CACHE in sw.js
+const APP_VERSION = '39'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -51,7 +51,7 @@ const S = {
   packs: [], packDone: [], todayDay: null,
   fdReady: false, fdOrder: [], fdIdeas: [], fdWeeks: [],
   skemaWho: null, skemaWeek: null, skemaDay: null, skemaHidden: null,
-  tab: 'home', authStep: 'email', authEmail: '', setupMode: pendingInvite() ? 'join' : 'create', ideaShift: {}, pushOn: false,
+  tab: 'today', authStep: 'email', authEmail: '', setupMode: pendingInvite() ? 'join' : 'create', ideaShift: {}, pushOn: false,
 };
 
 const app = document.getElementById('app');
@@ -167,7 +167,7 @@ async function loadAll() {
 }
 
 // The husband lands on the Today page
-function landing() { if (S.me?.roles?.includes('husband')) S.tab = 'today'; }
+function landing() { S.tab = 'today'; }
 
 function isoMinus(days) {
   const d = new Date(); d.setDate(d.getDate() - days); return todayISO(d);
@@ -317,19 +317,19 @@ function render() {
   setLang(store('hl-lang') || getLang());
   if (!S.session) return renderAuth();
   if (!S.me) return renderSetup();
-  const tabs = [...(myRoles().includes('husband') ? ['today'] : []), 'home', 'tasks', 'house', 'moments', 'calendar', 'family'];
-  if (!tabs.includes(S.tab)) S.tab = 'home';
+  const tabs = ['today', 'home', 'tasks', ...(isParent() ? ['plan'] : []), 'moments', 'calendar', 'family'];
+  if (!tabs.includes(S.tab)) S.tab = 'today';
   const svg = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
   const icons = {
     today: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>'),
     home: svg('<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>'),
     tasks: svg('<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.5 12l2.5 2.5 4.5-5"/>'),
-    house: svg('<path d="M4 20V10.5L12 4l8 6.5V20"/><path d="M9 20v-5h6v5"/><path d="M15 3.5l5 0.5-0.5 5"/>'),
+    plan: svg('<rect x="4" y="4.5" width="16" height="16" rx="3"/><path d="M8 3v3M16 3v3M4 9.5h16M8 13.5h3M8 16.5h6"/>'),
     moments: svg('<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>'),
     calendar: svg('<rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/>'),
     family: svg('<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2A4.5 4.5 0 0 1 21 18.5"/>'),
   };
-  const views = { today: viewToday, home: viewHome, tasks: viewTasks, house: viewHouse, moments: viewMoments, calendar: viewCalendar, family: viewFamily };
+  const views = { today: viewToday, home: viewHome, tasks: viewTasks, plan: viewPlan, moments: viewMoments, calendar: viewCalendar, family: viewFamily };
   app.innerHTML = `
     <header class="top hero hero-${S.tab}">
       <div class="hero-text">
@@ -539,20 +539,14 @@ function viewHome() {
   return `
     ${pointsCard()}
     ${famdayCard(true)}
-    ${free.length ? `<h2>${esc(t('freeTasks'))}</h2>
-      <div class="list cols">${free.slice(0, FIRST).map(row).join('')}</div>
-      ${free.length > FIRST ? `<details class="more"><summary>${esc(t('showAll'))} (${free.length})</summary>
-        <div class="list cols">${free.slice(FIRST).map(row).join('')}</div></details>` : ''}` : ''}
     <h2>${esc(t('upcoming'))}</h2>
     ${upcomingChips}
     ${plannedSoon.map(plannedRow).join('')}
     ${upShown.length ? `<div class="list cols">${upShown.map(({ ev, st }) => eventRow(ev, st)).join('')}</div>`
       : plannedSoon.length ? '' : `<p class="empty">${esc(t('noUpcoming'))}</p>`}
-    <h2>${esc(t('myToday'))}</h2>
-    ${mine.length ? `<div class="list cols">${mine.map(row).join('')}</div>`
-                  : `<p class="empty">${esc(t('nothingToday'))}</p>`}
+    ${familyTodaySection()}
     ${due.length ? `<h2>${esc(t('timeFor'))}</h2>${pick}${shown.map(({ tr, st }) => momentCard(tr, st, true)).join('')}` : ''}
-    ${!due.length && !mine.length && !free.length ? `<p class="allgood">${esc(t('allGood'))}</p>` : ''}`;
+`;
 }
 
 // ------------------------------------------------------------ today (the husband's page)
@@ -701,9 +695,13 @@ function viewToday() {
   const program = S.events.filter((ev) => !ev.lesson && occursOn(ev, d))
     .sort((a, b) => (timeOf(a) || '00').localeCompare(timeOf(b) || '00'));
 
-  // 3. My tasks (today only)
-  const mine = isToday ? S.tasks.map((task) => ({ task, st: taskState(task) }))
-    .filter(({ st }) => st.active && !st.done && (st.kind === 'open' ? st.took : st.forMe)) : [];
+  // 3. My tasks today: picked by me or given to me
+  const mine = isToday ? myTasksToday() : [];
+  const nOpen = mine.filter((x) => !x.st.done).length;
+  const tasksBlock = isToday ? `<div class="mytasks-head"><h2>✅ ${esc(t('myToday'))}</h2>
+      ${mine.length ? `<span class="chip ${nOpen ? '' : 'yes'}">${mine.length - nOpen}/${mine.length}</span>` : ''}</div>
+    ${mine.length ? `<div class="list cols">${mine.map(({ task, st }) => myTaskRow(task, st)).join('')}</div>` : `<p class="empty">${esc(t('pk.noneMine'))}</p>`}
+    <button class="small" data-act="tab" data-id="tasks">🎯 ${esc(t('pk.pickMore'))}</button>` : '';
 
   // 4–6. Coming up
   const kids = comingUp(d, aboutKids);
@@ -713,20 +711,18 @@ function viewToday() {
   const special = comingUp(d, (ev) => ['birthday', 'anniversary'].includes(ev.type) && ev.yearly && !shown.has(ev.id));
   const anyTags = S.events.some((ev) => (ev.people || []).length);
 
-  return `${head}${bag}${famdayCard(true)}
+  const parent = isParent();
+  return `${head}${tasksBlock}${parent ? bag : ''}${famdayCard(true)}
     <h2>📅 ${esc(t(isToday ? 'td.program' : 'td.programTomorrow'))}</h2>
     ${skemaLink(d)}
     ${fdRow ? `<div class="list fd-today"><div class="row dayev" data-act="fdPick" data-id="${fdRow.week_start}"><div class="when time">${fdRow.at_time ? `<b>${esc(fdRow.at_time)}</b>` : `<small>${esc(t('td.allDay'))}</small>`}</div>
       <div class="body"><div class="ttl">${esc(fdRow.emoji || '🎉')} ${esc(t('fd.title'))}: ${esc(fdRow.title)}</div><div class="meta">${esc(t('fd.chosenBy', { name: personLabel(fdRow.chooser) }))}</div></div></div></div>` : ''}
     ${program.length ? `<div class="list">${program.map((ev) => dayEventRow(ev, d, false)).join('')}</div>` : fdRow ? '' : `<p class="empty">${esc(t('td.noProgram'))}</p>`}
-    ${isToday ? `<h2>✅ ${esc(t('myToday'))}</h2>${mine.length
-      ? `<div class="list">${mine.map(({ task, st }) => (isHouse(task) ? houseRow(task, st, true) : taskRow(task, st))).join('')}</div>`
-      : `<p class="empty">${esc(t('nothingToday'))}</p>`}` : ''}
-    <h2>👧 ${esc(t('td.kids'))}</h2>${comingList(kids, 'td.none')}
+    ${parent ? `<h2>👧 ${esc(t('td.kids'))}</h2>${comingList(kids, 'td.none')}
     <h2>💛 ${esc(t('td.wife', { name: personLabel(WIFE) }))}</h2>${comingList(wife, 'td.none')}
     ${family.length ? `<h2>👨‍👩‍👧‍👦 ${esc(t('td.familyComing'))}</h2>${comingList(family, 'td.none')}` : ''}
     ${special.length ? `<h2>🎂 ${esc(t('td.remember'))}</h2>${comingList(special, 'td.none')}` : ''}
-    ${anyTags ? '' : `<p class="hint">💡 ${esc(t('td.tagHint'))}</p>`}`;
+    ${anyTags ? '' : `<p class="hint">💡 ${esc(t('td.tagHint'))}</p>`}` : ''}`;
 }
 
 // All pack items, for changing ones that aren't due today
@@ -1199,43 +1195,154 @@ function taskRow(task, st, opts = {}) {
     </div>`;
 }
 
-function viewTasks() {
-  const all = S.tasks.filter((task) => !isHouse(task)).map((task) => ({ task, st: taskState(task) }));
-  const active = all.filter((x) => x.st.active || x.task.recurrence === 'once');
-  const mine = active.filter(({ task, st }) => !task.plan_id && st.kind !== 'open' && st.forMe)
-    .concat(active.filter(({ task, st }) => task.plan_id && st.kind === 'assigned' && st.forMe));
-  const fam = active.filter(({ st }) => st.kind === 'open');
-  const others = active.filter(({ task, st }) => !task.plan_id && st.kind !== 'open' && !st.forMe);
+// ------------------------------------------------------------ pick, do, plan
+// Opgaver = the picker: every task that is up now; the circle PICKS it.
+// I dag = what I picked or was given; the circle there marks it DONE.
+// Planlæg = parents set up tasks, plans, rooms and chore types.
 
+const taskIcon = (task) => (isHouse(task) ? choreIcon(byId(S.chores, task.chore_id)?.name || task.title) : '✅');
+const whereOf = (task) => { const p = byId(S.places, task.place_id); return p && !p.daily ? p.name : ''; };
+const lastLine = (task) => { const ld = lastDone(task); return ld ? `${lastAgo(ld)} (${memberName(ld.done_by)})` : t('house.never'); };
+
+// A task in the picker: tap the circle to pick it (again to let it go)
+function pickTile(task, st) {
+  const others = st.takers.filter((u) => u !== uid());
+  const meta = [];
+  if (whereOf(task)) meta.push(whereOf(task));
+  if (task.recurrence !== 'daily') meta.push(recLabel(task));
+  if (isHouse(task)) meta.push(lastLine(task));
+  if (task.points) meta.push(`⭐ ${task.points}`);
+  let btn;
+  if (st.took) btn = `<button class="pick on" data-act="untake" data-id="${task.id}" aria-label="${esc(t('pk.unpick'))}">✓</button>`;
+  else if (st.full) btn = `<span class="chip">${esc(t('full'))}</span>`;
+  else btn = `<button class="pick" data-act="take" data-id="${task.id}" aria-label="${esc(t('pk.pick'))}"></button>`;
+  return `<div class="row ptile ${st.took ? 'is-mine' : ''}">
+    <span class="cicon big" aria-hidden="true">${taskIcon(task)}</span>
+    <div class="body"><div class="ttl one">${esc(isHouse(task) ? byId(S.chores, task.chore_id)?.name || task.title : task.title)}</div>
+      <div class="meta one">${others.length ? others.map((u) => `<span class="chip">${esc(memberName(u))}</span>`).join('') : ''}${meta.map(esc).join(' · ')}</div></div>
+    ${btn}</div>`;
+}
+
+// A task on I dag: tick it off; picked ones can be let go
+function myTaskRow(task, st) {
+  const meta = [];
+  if (whereOf(task)) meta.push(whereOf(task));
+  if (st.kind === 'open') meta.push(t('pk.picked'));
+  else meta.push(t('pk.given'));
+  if (task.points) meta.push(`⭐ ${task.points}`);
+  if (task.remind_time && !st.done) meta.push(remindLabel(task));
+  const doneMe = st.doneByMe || (st.done && st.kind !== 'assigned');
+  return `<div class="row mytask ${st.done ? 'is-done' : ''}">
+    <button class="tick ${doneMe ? 'on' : ''}" data-act="${doneMe ? 'undo' : 'done'}" data-id="${task.id}" aria-label="${esc(doneMe ? t('undo') : t('markDone'))}">${doneMe ? '✓' : ''}</button>
+    <span class="cicon big" aria-hidden="true">${taskIcon(task)}</span>
+    <div class="body"><div class="ttl one">${esc(taskTitle(task))}</div>
+      <div class="meta one">${meta.map(esc).join(' · ')}</div></div>
+    ${st.kind === 'open' && st.took && !st.done ? `<button class="icon" data-act="untake" data-id="${task.id}" aria-label="${esc(t('pk.unpick'))}">✕</button>` : ''}
+  </div>`;
+}
+
+// Mine today: picked by me, or given to me / my role (done ones stay, ticked)
+function myTasksToday() {
+  return S.tasks.map((task) => ({ task, st: taskState(task) }))
+    .filter(({ st }) => st.active && (st.kind === 'open' ? st.took || st.doneByMe : st.forMe))
+    .sort((a, b) => a.st.done - b.st.done);
+}
+
+function viewTasks() {
+  const items = S.tasks.map((task) => ({ task, st: taskState(task) }))
+    .filter(({ st }) => st.active && st.kind === 'open' && !st.done);
+  const picked = items.filter((x) => x.st.took).length;
+  // groups: daily chores, family tasks, then each zone's rooms
+  const groups = [];
+  const daily = items.filter(({ task }) => isHouse(task) && zoneOf(byId(S.places, task.place_id) || {}) === 'daily');
+  const fam = items.filter(({ task }) => !isHouse(task));
+  if (daily.length) groups.push([`${ZONE_ICON.daily} ${zoneLabel('daily')}`, daily]);
+  if (fam.length) groups.push([`👨‍👩‍👧‍👦 ${t('familyTasks')}`, fam]);
+  ['in', 'out'].forEach((z) => {
+    const zi = items.filter(({ task }) => isHouse(task) && zoneOf(byId(S.places, task.place_id) || {}) === z)
+      .sort((a, b) => sortOf(S.places, a.task.place_id) - sortOf(S.places, b.task.place_id)
+        || sortOf(S.chores, a.task.chore_id) - sortOf(S.chores, b.task.chore_id));
+    if (zi.length) groups.push([`${ZONE_ICON[z]} ${zoneLabel(z)}`, zi]);
+  });
+  const doneToday = S.tasks.map((task) => ({ task, st: taskState(task) }))
+    .filter(({ st }) => st.active && st.kind === 'open' && st.done);
+  return `
+    <p class="hint">${esc(t('pk.help'))}</p>
+    <div class="toolbar">
+      ${picked ? `<button class="primary" data-act="tab" data-id="today">☀️ ${esc(t('pk.goToday', picked))}</button>` : ''}
+      ${!isParent() ? `<button data-act="newTask">＋ ${t('newTask')}</button>` : ''}
+    </div>
+    ${groups.length ? groups.map(([h, list]) => `<h2>${esc(h)} <small class="count">${list.length}</small></h2>
+      <div class="list cols">${list.map(({ task, st }) => pickTile(task, st)).join('')}</div>`).join('')
+      : `<p class="allgood">${esc(t('pk.none'))}</p>`}
+    ${doneToday.length ? `<details><summary>${esc(t('house.doneNow'))} (${doneToday.length})</summary>
+      <div class="list cols">${doneToday.map(({ task, st }) => `<div class="row ptile is-done"><span class="cicon big" aria-hidden="true">${taskIcon(task)}</span>
+        <div class="body"><div class="ttl one">${esc(taskTitle(task))}</div><div class="meta one">✓ ${esc(st.doneRows.map((d) => memberName(d.done_by)).join(', '))}</div></div></div>`).join('')}</div></details>` : ''}`;
+}
+
+// Hjem: who does what today (family tasks that are taken, given or done)
+function familyTodaySection() {
+  const rows = S.tasks.map((task) => ({ task, st: taskState(task) }))
+    .filter(({ st }) => st.active && (st.takers.length || st.doneRows.length || st.kind === 'assigned'));
+  const free = S.tasks.map((task) => taskState(task)).filter((st) => st.active && st.kind === 'open' && !st.done && !st.full).length;
+  if (!rows.length && !free) return '';
+  const people = (task, st) => {
+    const ids = st.kind === 'assigned' ? task.assignees : [...new Set([...st.takers, ...st.doneRows.map((d) => d.done_by)])];
+    return ids.map((u) => { const ok = st.doneRows.some((d) => d.done_by === u);
+      return `<span class="chip ${ok ? 'yes' : ''}">${ok ? '✓' : '○'} ${esc(memberName(u))}</span>`; }).join('');
+  };
+  return `<h2>${esc(t('pk.whoWhat'))}</h2>
+    ${rows.length ? `<div class="list cols">${rows.map(({ task, st }) => `<div class="row ptile ${st.done ? 'is-done' : ''}">
+      <span class="cicon big" aria-hidden="true">${taskIcon(task)}</span>
+      <div class="body"><div class="ttl one">${esc(taskTitle(task))}</div><div class="meta one">${people(task, st)}</div></div></div>`).join('')}</div>` : ''}
+    ${free ? `<button class="small" data-act="tab" data-id="tasks">🎯 ${esc(t('pk.freeN', free))}</button>` : ''}`;
+}
+
+// Planlæg (parents): tasks & plans, the house, and what was done
+function manageRow(task) {
+  const st = taskState(task);
+  const who = st.kind === 'open' ? t('pk.anyone')
+    : st.kind === 'assigned' ? task.assignees.map(memberName).join(', ')
+    : task.roles.map((r) => t('roles.' + r)).join(', ');
+  const meta = [recLabel(task), who];
+  if (task.points) meta.push(`⭐ ${task.points}`);
+  return `<button type="button" class="row mrow" data-act="editTask" data-id="${task.id}">
+    <span class="cicon big" aria-hidden="true">${taskIcon(task)}</span>
+    <span class="body"><span class="ttl one">${esc(task.title)}</span><span class="meta one">${esc(meta.join(' · '))}</span></span>
+    <span class="icon" aria-hidden="true">✎</span></button>`;
+}
+
+function viewPlan() {
+  const mode = ['tasks', 'house', 'log'].includes(S.planMode) ? S.planMode : 'tasks';
+  const seg = `<div class="seg house-seg">${['tasks', 'house', 'log'].map((m) =>
+    `<button data-act="planMode" data-id="${m}" class="${mode === m ? 'on' : ''}">${esc(t('pl.' + m))}</button>`).join('')}</div>`;
+  if (mode === 'house') {
+    if (!S.places.length && !S.chores.length) return `${seg}<div class="card"><p>${esc(t('house.empty'))}</p>
+      <button class="primary" data-act="seedHouse">${t('house.loadDefaults')}</button></div>`;
+    return seg + houseSetup();
+  }
+  if (mode === 'log') return seg + houseLog();
+  const all = S.tasks.filter((task) => !isHouse(task)).map((task) => ({ task, st: taskState(task) }));
+  const loose = all.filter(({ task }) => !task.plan_id);
   const plans = S.plans.map((p) => {
     const items = all.filter(({ task }) => task.plan_id === p.id);
-    if (!items.length && !isParent()) return '';
-    return `
-      <div class="card plan">
-        <div class="plan-head"><div><h3>${esc(p.title)}</h3>${p.notes ? `<p class="notes">${esc(p.notes)}</p>` : ''}</div>
-          ${isParent() ? `<button class="icon" data-act="editPlan" data-id="${p.id}" aria-label="${t('edit')}">✎</button>` : ''}</div>
-        <div class="list">${items.map(({ task, st }) => taskRow(task, st, { inPlan: true, manage: true })).join('') ||
-          `<p class="empty">${esc(t('noTasks'))}</p>`}</div>
-        ${isParent() ? `<button class="small" data-act="newTask" data-id="${p.id}">＋ ${t('addTask')}</button>` : ''}
-      </div>`;
+    return `<div class="card plan">
+      <div class="plan-head"><div><h3>${esc(p.title)}</h3>${p.notes ? `<p class="notes">${esc(p.notes)}</p>` : ''}</div>
+        <button class="icon" data-act="editPlan" data-id="${p.id}" aria-label="${t('edit')}">✎</button></div>
+      <div class="list cols">${items.map(({ task }) => manageRow(task)).join('') || `<p class="empty">${esc(t('noTasks'))}</p>`}</div>
+      <button class="small" data-act="newTask" data-id="${p.id}">＋ ${t('addTask')}</button></div>`;
   }).join('');
-
-  return `
-    ${pointsCard()}
+  return `${seg}
     <div class="toolbar">
       <button class="primary" data-act="newTask">＋ ${t('newTask')}</button>
-      ${isParent() ? `<button data-act="newPlan">＋ ${t('newPlan')}</button>
-        <button data-act="templatePlan">📋 ${t('fromTemplate')}</button>` : ''}
+      <button data-act="newPlan">＋ ${t('newPlan')}</button>
+      <button data-act="templatePlan">📋 ${t('fromTemplate')}</button>
+      <button data-act="planMode" data-id="house">🏠 ${t('house.addPlace')}</button>
     </div>
-    <h2>${esc(t('myTasks'))}</h2>
-    ${mine.length ? `<div class="list">${mine.map(({ task, st }) => taskRow(task, st, { manage: true })).join('')}</div>`
-                  : `<p class="empty">${esc(t('noTasks'))}</p>`}
-    <h2>${esc(t('familyTasks'))}</h2>
-    ${fam.length ? `<div class="list">${fam.map(({ task, st }) => taskRow(task, st, { manage: true })).join('')}</div>`
-                 : `<p class="empty">${esc(t('noTasks'))}</p>`}
-    ${isParent() ? `<h2>${esc(t('plans'))}</h2>${plans || `<p class="empty">${esc(t('noPlans'))}</p>`}` : ''}
-    ${others.length ? `<h2>${esc(t('forOthers'))}</h2><div class="list">${others.map(({ task, st }) => taskRow(task, st, { manage: true })).join('')}</div>` : ''}
-    ${isParent() ? upcomingEventTasks(all) : ''}`;
+    <h2>${esc(t('pl.loose'))}</h2>
+    ${loose.length ? `<div class="list cols">${loose.map(({ task }) => manageRow(task)).join('')}</div>` : `<p class="empty">${esc(t('noTasks'))}</p>`}
+    <h2>${esc(t('plans'))}</h2>${plans || `<p class="empty">${esc(t('noPlans'))}</p>`}
+    ${upcomingEventTasks(all)}`;
 }
 
 // Event tasks that haven't come up yet (they appear above 14 days before their deadline)
@@ -1456,19 +1563,6 @@ function lastAgo(d) {
 
 const houseTask = (placeId, choreId) => S.tasks.find((x) => x.place_id === placeId && x.chore_id === choreId);
 const sortOf = (list, id) => byId(list, id)?.sort ?? 0;
-
-function viewHouse() {
-  const parent = isParent();
-  const mode = parent ? S.houseMode : 'todo';
-  const seg = parent ? `<div class="seg house-seg">${['todo', 'setup', 'log'].map((m) =>
-    `<button data-act="houseMode" data-id="${m}" class="${mode === m ? 'on' : ''}">${esc(t('house.' + m))}</button>`).join('')}</div>` : '';
-  if (parent && !S.places.length && !S.chores.length) {
-    return `${seg}<div class="card"><p>${esc(t('house.empty'))}</p>
-      <button class="primary" data-act="seedHouse">${t('house.loadDefaults')}</button></div>`;
-  }
-  const body = mode === 'setup' ? houseSetup() : mode === 'log' ? houseLog() : houseTodo();
-  return (mode === 'todo' ? pointsCard() : '') + seg + body;
-}
 
 function houseRow(task, st, withPlace = false) {
   const chore = byId(S.chores, task.chore_id);
@@ -2626,6 +2720,7 @@ const ACTIONS = {
   // house
   hardRefresh: () => hardRefresh(),
   houseMode: (id) => { S.houseMode = id; render(); window.scrollTo(0, 0); },
+  planMode: (id) => { S.planMode = id; S.tab = 'plan'; render(); window.scrollTo(0, 0); },
   setupZone: (id) => { S.setupZone = id; render(); window.scrollTo(0, 0); },
   momentTab: (id) => { S.momentTab = id; render(); window.scrollTo(0, 0); },
   calFilter: (id) => { store('hl-calf', id); render(); },

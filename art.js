@@ -116,3 +116,4 @@ export const PAGE_ART = {
     <path d="M138 96c14 0 20-10 20-20-12 0-20 8-20 20z" fill="#4E9F37"/>
     <path d="M118 132h40" stroke="#8A5A35" stroke-width="6" stroke-linecap="round"/>`),
 };
+PAGE_ART.plan = PAGE_ART.house;
