@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '39'; // keep in step with CACHE in sw.js
+const APP_VERSION = '40'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -317,7 +317,7 @@ function render() {
   setLang(store('hl-lang') || getLang());
   if (!S.session) return renderAuth();
   if (!S.me) return renderSetup();
-  const tabs = ['today', 'home', 'tasks', ...(isParent() ? ['plan'] : []), 'moments', 'calendar', 'family'];
+  const tabs = ['today', 'tasks', ...(isParent() ? ['plan'] : []), 'moments', 'calendar', 'family'];
   if (!tabs.includes(S.tab)) S.tab = 'today';
   const svg = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
   const icons = {
@@ -331,12 +331,12 @@ function render() {
   };
   const views = { today: viewToday, home: viewHome, tasks: viewTasks, plan: viewPlan, moments: viewMoments, calendar: viewCalendar, family: viewFamily };
   app.innerHTML = `
-    <header class="top hero hero-${S.tab}">
+    <header class="top hero hero-${S.tab === 'today' ? 'home' : S.tab}">
       <div class="hero-text">
-        <h1>${esc(S.tab === 'home' ? t('hello', { name: S.me.display_name }) : t('tabs.' + S.tab))}</h1>
-        <span class="fam">${esc(S.tab === 'home' ? cap(new Date().toLocaleDateString(LOCALE(), { weekday: 'long', day: 'numeric', month: 'long' })) : S.family?.name)}</span>
+        <h1>${esc(S.tab === 'today' ? t('hello', { name: S.me.display_name }) : t('tabs.' + S.tab))}</h1>
+        <span class="fam">${esc(S.tab === 'today' ? cap(new Date().toLocaleDateString(LOCALE(), { weekday: 'long', day: 'numeric', month: 'long' })) : S.family?.name)}</span>
       </div>
-      <div class="hero-art">${S.tab === 'home' ? RAINBOW_SMALL : PAGE_ART[S.tab] || ''}</div>
+      <div class="hero-art">${S.tab === 'today' ? RAINBOW_SMALL : PAGE_ART[S.tab] || ''}</div>
       <button class="icon refresh" data-act="hardRefresh" aria-label="${t('updateApp')}" title="${t('updateApp')}">↻</button></header>
     <main class="view">${views[S.tab]()}</main>
     <nav class="tabs" style="grid-template-columns:repeat(${tabs.length},1fr)">${tabs.map((k) => `
@@ -348,6 +348,11 @@ function render() {
 
 // A sideways-scrolling row of chips is redrawn on every tap; bring the chosen
 // chip back into view (centred) instead of jumping back to the start
+document.addEventListener('toggle', (e) => {
+  const f = e.target?.dataset?.fold;
+  if (f) store('hl-fold-' + f, e.target.open ? '1' : '0');
+}, true);
+
 function keepChipsInView() {
   document.querySelectorAll('.kind-chips').forEach((row) => {
     const on = row.querySelector('.hchip.on');
@@ -666,21 +671,45 @@ function comingList(rows, emptyKey) {
     ? `<details class="more"><summary>${esc(t('showAll'))} (${rows.length})</summary>${html(rows.slice(FIRST))}</details>` : '');
 }
 
+// A section that can be folded up; the app remembers it per section
+function fold(id, title, body, count = '') {
+  if (!body) return '';
+  const closed = store('hl-fold-' + id) === '0';
+  return `<details class="fold" data-fold="${id}" ${closed ? '' : 'open'}>
+    <summary><h2>${title}${count !== '' ? ` <small class="count">${count}</small>` : ''}</h2></summary>${body}</details>`;
+}
+
+// One slim line of stars instead of the big points card
+function pointsStrip() {
+  if (!S.points.length) return '';
+  const rows = S.points.map((p) => ({ name: memberName(p.user_id), total: Number(p.total), week: Number(p.week), me: p.user_id === uid() }))
+    .filter((p) => isParent() || p.me).sort((a, b) => b.total - a.total);
+  if (!rows.length) return '';
+  return `<div class="pstrip">${rows.map((p) => `<span class="pchip"><b>⭐ ${p.total}</b> ${esc(p.me && !isParent() ? t('myPoints') : p.name)}${p.week ? ` <small>+${p.week}</small>` : ''}</span>`).join('')}</div>`;
+}
+
 function viewToday() {
   const d = todayDate();
   const isToday = d === today();
+  const parent = isParent();
   const head = `<div class="today-head">
-      <p class="hello">${esc(cap(fmtDay(d, { weekday: 'long', day: 'numeric', month: 'long' })))}</p>
+      ${pointsStrip()}
       <div class="seg"><button data-act="todayDay" data-id="today" class="${isToday ? 'on' : ''}">${esc(t('td.today'))}</button>
         <button data-act="todayDay" data-id="tomorrow" class="${isToday ? '' : 'on'}">${esc(t('td.tomorrow'))}</button></div></div>`;
 
-  // 1. Bags: grouped by child, everyone else last
+  // 1. Mit: my tasks and the bags
+  const mine = isToday ? myTasksToday() : [];
+  const nOpen = mine.filter((x) => !x.st.done).length;
+  const tasksBlock = isToday ? `<div class="mytasks-head"><h2>✅ ${esc(t('myToday'))}</h2>
+      ${mine.length ? `<span class="chip ${nOpen ? '' : 'yes'}">${mine.length - nOpen}/${mine.length}</span>` : ''}</div>
+    ${mine.length ? `<div class="list cols">${mine.map(({ task, st }) => myTaskRow(task, st)).join('')}</div>` : `<p class="empty">${esc(t('pk.noneMine'))}</p>`}
+    <button class="small" data-act="tab" data-id="tasks">🎯 ${esc(t('pk.pickMore'))}</button>` : '';
   const packs = packsOn(d);
   const groups = {};
   packs.forEach((x) => { (groups[x.who || ''] ||= []).push(x); });
   const order = Object.keys(groups).sort((a, b) => (!a) - (!b) || a.localeCompare(b));
   const nDone = packs.filter((x) => packIsDone(x.id, d)).length;
-  const bag = `<div class="card bag">
+  const bag = parent ? `<div class="card bag">
       <div class="bag-head"><h2>🎒 ${esc(t('td.pack'))}</h2>
         ${packs.length ? `<span class="chip ${nDone === packs.length ? 'yes' : ''}">${nDone}/${packs.length}</span>` : ''}</div>
       ${packs.length ? order.map((w) => `<h3 class="subhead">${esc(w || t('td.everyone'))}</h3>
@@ -688,41 +717,56 @@ function viewToday() {
         : `<p class="empty">${esc(t('td.packEmpty'))}</p>`}
       <div class="acts"><button class="small primary" data-act="newPack">＋ ${t('td.addPack')}</button></div>
       ${S.packs.length ? `<h3 class="subhead">${esc(t('td.allPack'))} (${S.packs.length})</h3>${packOverview()}` : ''}
-    </div>`;
+    </div>` : '';
 
-  // 2. What happens that day
+  // 2. Dagen: the program
   const fdRow = S.fdWeeks.find((w) => w.on_date === d && w.title && !w.cancelled);
   const program = S.events.filter((ev) => !ev.lesson && occursOn(ev, d))
     .sort((a, b) => (timeOf(a) || '00').localeCompare(timeOf(b) || '00'));
-
-  // 3. My tasks today: picked by me or given to me
-  const mine = isToday ? myTasksToday() : [];
-  const nOpen = mine.filter((x) => !x.st.done).length;
-  const tasksBlock = isToday ? `<div class="mytasks-head"><h2>✅ ${esc(t('myToday'))}</h2>
-      ${mine.length ? `<span class="chip ${nOpen ? '' : 'yes'}">${mine.length - nOpen}/${mine.length}</span>` : ''}</div>
-    ${mine.length ? `<div class="list cols">${mine.map(({ task, st }) => myTaskRow(task, st)).join('')}</div>` : `<p class="empty">${esc(t('pk.noneMine'))}</p>`}
-    <button class="small" data-act="tab" data-id="tasks">🎯 ${esc(t('pk.pickMore'))}</button>` : '';
-
-  // 4–6. Coming up
-  const kids = comingUp(d, aboutKids);
-  const wife = comingUp(d, (ev) => aboutWife(ev) && !aboutKids(ev));
-  const family = comingUp(d, (ev) => aboutFamily(ev) && !aboutKids(ev) && !aboutWife(ev));
-  const shown = new Set([...kids, ...wife, ...family].map((x) => x.ev.id));
-  const special = comingUp(d, (ev) => ['birthday', 'anniversary'].includes(ev.type) && ev.yearly && !shown.has(ev.id));
-  const anyTags = S.events.some((ev) => (ev.people || []).length);
-
-  const parent = isParent();
-  return `${head}${tasksBlock}${parent ? bag : ''}${famdayCard(true)}
-    <h2>📅 ${esc(t(isToday ? 'td.program' : 'td.programTomorrow'))}</h2>
-    ${skemaLink(d)}
+  const day = `${skemaLink(d)}
     ${fdRow ? `<div class="list fd-today"><div class="row dayev" data-act="fdPick" data-id="${fdRow.week_start}"><div class="when time">${fdRow.at_time ? `<b>${esc(fdRow.at_time)}</b>` : `<small>${esc(t('td.allDay'))}</small>`}</div>
       <div class="body"><div class="ttl">${esc(fdRow.emoji || '🎉')} ${esc(t('fd.title'))}: ${esc(fdRow.title)}</div><div class="meta">${esc(t('fd.chosenBy', { name: personLabel(fdRow.chooser) }))}</div></div></div></div>` : ''}
     ${program.length ? `<div class="list">${program.map((ev) => dayEventRow(ev, d, false)).join('')}</div>` : fdRow ? '' : `<p class="empty">${esc(t('td.noProgram'))}</p>`}
-    ${parent ? `<h2>👧 ${esc(t('td.kids'))}</h2>${comingList(kids, 'td.none')}
-    <h2>💛 ${esc(t('td.wife', { name: personLabel(WIFE) }))}</h2>${comingList(wife, 'td.none')}
-    ${family.length ? `<h2>👨‍👩‍👧‍👦 ${esc(t('td.familyComing'))}</h2>${comingList(family, 'td.none')}` : ''}
-    ${special.length ? `<h2>🎂 ${esc(t('td.remember'))}</h2>${comingList(special, 'td.none')}` : ''}
-    ${anyTags ? '' : `<p class="hint">💡 ${esc(t('td.tagHint'))}</p>`}` : ''}`;
+    ${fdRow ? '' : famdayCard(true)}`;
+
+  // 4. Snart: one list for the next 30 days, filtered by who it's about or by calendar
+  const all = comingUp(d, () => true);
+  const special = (ev) => ['birthday', 'anniversary'].includes(ev.type) && ev.yearly;
+  const filters = [['all', t('calFilterAll'), () => true]];
+  if (parent) {
+    filters.push(['kids', `👧 ${t('td.kidsShort')}`, aboutKids]);
+    filters.push(['wife', `💛 ${personLabel(WIFE)}`, (ev) => aboutWife(ev)]);
+    filters.push(['family', `👨‍👩‍👧‍👦 ${t('td.family')}`, (ev) => aboutFamily(ev)]);
+  }
+  filters.push(['special', `🎂 ${t('td.specialShort')}`, special]);
+  (parent ? S.calendars || [] : []).filter((c) => all.some(({ ev }) => evCalIds(ev).includes(c.id)))
+    .forEach((c) => filters.push([c.id, `${calDot(c.id)}${esc(c.name)}`, (ev) => evCalIds(ev).includes(c.id), true]));
+  const counted = filters.map(([id, label, fn, raw]) => ({ id, label, raw, n: all.filter(({ ev }) => fn(ev)).length, fn }))
+    .filter((f) => f.id === 'all' || f.n);
+  let sf = store('hl-snartf') || 'all';
+  if (!counted.some((f) => f.id === sf)) sf = 'all';
+  const cur = counted.find((f) => f.id === sf);
+  const snartChips = counted.length > 1 ? `<div class="kind-chips cal-chips">${counted.map((f) =>
+    `<button class="hchip ${f.id === sf ? 'on' : ''}" data-act="snartFilter" data-id="${f.id}">${f.raw ? f.label : esc(f.label)} (${f.n})</button>`).join('')}</div>` : '';
+  const snart = `${snartChips}${comingList(all.filter(({ ev }) => cur.fn(ev)), 'td.none')}`;
+
+  // 5. Tid til noget særligt: the two most overdue moments
+  const due = S.trackers
+    .map((tr) => ({ tr, st: trackerStatus(tr.interval_days, entriesOf(tr.id).map((e) => e.done_on), today()) }))
+    .filter((x) => x.st.dueIn <= 0 && !plannedAhead(x.tr))
+    .sort((a, b) => a.st.dueIn - b.st.dueIn);
+  const moments = due.length ? `${due.slice(0, 2).map(({ tr, st }) => momentCard(tr, st, true)).join('')}
+    <button class="small" data-act="tab" data-id="moments">${esc(t('td.allMoments', due.length))} →</button>` : '';
+
+  const anyTags = S.events.some((ev) => (ev.people || []).length);
+  return `${head}
+    ${tasksBlock}
+    ${bag}
+    <h2>📅 ${esc(t(isToday ? 'td.program' : 'td.programTomorrow'))}</h2>${day}
+    ${isToday ? fold('who', `👨‍👩‍👧‍👦 ${esc(t('pk.whoWhat'))}`, familyTodaySection()) : ''}
+    ${fold('snart', `🗓️ ${esc(t('upcoming'))}`, snart, all.length)}
+    ${fold('moments', `💛 ${esc(t('timeFor'))}`, moments, due.length || '')}
+    ${parent && !anyTags ? `<p class="hint">💡 ${esc(t('td.tagHint'))}</p>` : ''}`;
 }
 
 // All pack items, for changing ones that aren't due today
@@ -1291,8 +1335,7 @@ function familyTodaySection() {
     return ids.map((u) => { const ok = st.doneRows.some((d) => d.done_by === u);
       return `<span class="chip ${ok ? 'yes' : ''}">${ok ? '✓' : '○'} ${esc(memberName(u))}</span>`; }).join('');
   };
-  return `<h2>${esc(t('pk.whoWhat'))}</h2>
-    ${rows.length ? `<div class="list cols">${rows.map(({ task, st }) => `<div class="row ptile ${st.done ? 'is-done' : ''}">
+  return `${rows.length ? `<div class="list cols">${rows.map(({ task, st }) => `<div class="row ptile ${st.done ? 'is-done' : ''}">
       <span class="cicon big" aria-hidden="true">${taskIcon(task)}</span>
       <div class="body"><div class="ttl one">${esc(taskTitle(task))}</div><div class="meta one">${people(task, st)}</div></div></div>`).join('')}</div>` : ''}
     ${free ? `<button class="small" data-act="tab" data-id="tasks">🎯 ${esc(t('pk.freeN', free))}</button>` : ''}`;
@@ -1426,6 +1469,21 @@ function taskForm(task, planId, preset = null) {
     form.querySelectorAll('[data-rec]').forEach((el) => { el.hidden = !el.dataset.rec.split(' ').includes(r); });
   };
   form.elements.kind.onchange = sync; form.elements.recurrence.onchange = sync; sync();
+  // A task for the children gets 10 points unless the parent typed something else
+  const pts = form.elements.points;
+  if (pts) {
+    let touched = Number(pts.value) > 0;
+    pts.addEventListener('input', () => { touched = true; });
+    const kidIds = children().map((c) => c.user_id);
+    const forKids = () => {
+      const k = form.elements.kind.value;
+      if (k === 'assigned') return [...form.querySelectorAll('input[name=assignees]:checked')].some((x) => kidIds.includes(x.value));
+      return [...form.querySelectorAll('input[name=roles]:checked')].some((x) => x.value === 'child');
+    };
+    const kidPoints = () => { if (!touched) pts.value = forKids() ? 10 : 0; };
+    form.addEventListener('change', (e) => { if (e.target !== pts) kidPoints(); });
+    kidPoints();
+  }
   if (!editing && isEvent) form.elements.title.select();
   form.onsubmit = async (e) => {
     e.preventDefault();
@@ -2725,6 +2783,7 @@ const ACTIONS = {
   momentTab: (id) => { S.momentTab = id; render(); window.scrollTo(0, 0); },
   calFilter: (id) => { store('hl-calf', id); render(); },
   homeCalFilter: (id) => { store('hl-homecalf', id); render(); },
+  snartFilter: (id) => { store('hl-snartf', id); render(); },
   seedHouse: async () => { await run(sb.rpc('seed_house')); await refresh(); },
   // "Done!" straight away: take it (if not already) and tick it in one go
   houseDone: async (id) => {

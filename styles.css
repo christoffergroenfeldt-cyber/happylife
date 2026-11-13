@@ -604,3 +604,16 @@ button.row.mrow { width: 100%; text-align: left; font: inherit; color: inherit; 
 .mytasks-head { display: flex; align-items: center; justify-content: space-between; }
 .mytasks-head h2 { margin-bottom: 8px; }
 h2 small.count { font-family: Nunito, system-ui, sans-serif; font-size: .8rem; color: var(--muted); font-weight: 700; }
+
+/* ---------- I dag (merged with Hjem): points strip and foldable sections ---------- */
+.pstrip { display: flex; gap: 6px; flex-wrap: wrap; }
+.pchip { background: var(--surface); border-radius: 999px; padding: 4px 12px; font-size: .85rem; box-shadow: var(--shadow); }
+.pchip b { color: var(--head); }
+.pchip small { color: var(--ok); font-weight: 800; }
+details.fold { margin-top: 6px; }
+details.fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary h2 { flex: 1; }
+details.fold > summary::after { content: '▾'; color: var(--muted); font-size: 1.1rem; margin-left: 8px; transition: transform .15s; }
+details.fold:not([open]) > summary::after { transform: rotate(-90deg); }
+details.fold > summary + * { margin-top: 0; }
