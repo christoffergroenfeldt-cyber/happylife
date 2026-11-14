@@ -650,3 +650,7 @@ a.offer { display: inline-flex; align-items: center; padding: 8px 14px; border-r
 .school-msg.unread .ttl { font-weight: 800; }
 .school-read .msg-body { white-space: normal; line-height: 1.45; max-height: 60vh; overflow: auto; margin: 10px 0; }
 .watch .pending { color: var(--accent); font-weight: 600; }
+.phone-login { margin: 8px 0 12px; }
+.phone-login summary { font-weight: 700; cursor: pointer; padding: 6px 0; }
+.phone-login .steps { padding-left: 20px; margin: 6px 0; line-height: 1.45; }
+.phone-login .steps li { margin-bottom: 8px; }

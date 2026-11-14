@@ -2167,3 +2167,76 @@ end $$;
 
 revoke execute on function price_jobs(text), price_save(text, uuid, jsonb, jsonb, text, text) from public, authenticated;
 grant execute on function price_jobs(text), price_save(text, uuid, jsonb, jsonb, text, text) to anon;
+
+-- MitID login from the parent's own phone (school/aulalogin.py in a-Shell): STIL's
+-- bot protection blocks logins from servers. The phone sends the new Aula session
+-- with the parent's sync code; the job encrypts it into aula_session on its next
+-- run and clears session_import (the app can't read either).
+alter table school_links add column if not exists session_import jsonb;
+
+create or replace function school_session_import(p_token text, p_username text, p_session jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+declare me members; u text := nullif(btrim(coalesce(p_username, '')), '');
+begin
+  select m.* into me from sync_tokens st join members m on m.user_id = st.user_id
+   where st.token = trim(coalesce(p_token, ''));
+  if me.user_id is null then
+    raise exception 'Ukendt synkroniseringskode. Kopiér linjen igen i Happy Life (Opsætning → Skole direkte).';
+  end if;
+  if not (me.roles && array['mother','father']) then raise exception 'Kun mor og far kan forbinde Aula.'; end if;
+  if u is null or char_length(u) > 100 or coalesce(jsonb_typeof(p_session), '') <> 'object'
+     or coalesce(jsonb_typeof(p_session->'tokens'), '') <> 'object' or octet_length(p_session::text) > 100000 then
+    raise exception 'Ugyldigt login';
+  end if;
+  insert into school_links(user_id, family_id, mitid_username, session_import, status, login_note, login_updated, sync_requested)
+    values (me.user_id, me.family_id, u, p_session, 'ok', 'Logget ind fra telefonen ✓', now(), true)
+  on conflict (user_id) do update
+    set mitid_username = u, session_import = excluded.session_import, aula_session = null, status = 'ok',
+        login_qr1 = null, login_qr2 = null, login_otp = null,
+        login_note = excluded.login_note, login_updated = now(), sync_requested = true;
+end $$;
+revoke execute on function school_session_import(text, text, jsonb) from public, anon, authenticated;
+grant execute on function school_session_import(text, text, jsonb) to anon, authenticated;
+
+-- school_jobs also hands over a fresh session from the phone
+drop function if exists school_jobs(text);
+create or replace function school_jobs(p_key text)
+returns table (user_id uuid, mitid_username text, feeds jsonb, aula_session text, session_import jsonb,
+               status text, sync_token text, due boolean)
+language plpgsql security definer set search_path = public as $$
+#variable_conflict use_column
+begin
+  if not server_key_ok(p_key) then raise exception 'bad key'; end if;
+  insert into sync_tokens(user_id) select l.user_id from school_links l on conflict do nothing;
+  update school_links l set status = 'login_needed', login_qr1 = null, login_qr2 = null, login_otp = null,
+         login_note = 'Login udløb – prøv igen'
+   where l.status in ('login_requested','login_running') and l.login_updated < now() - interval '15 minutes';
+  return query
+  select l.user_id, l.mitid_username, l.feeds, l.aula_session, l.session_import, l.status, st.token,
+         l.session_import is not null or l.sync_requested or l.last_sync_at is null
+         or l.last_sync_at < now() - case when extract(hour from now() at time zone 'Europe/Copenhagen') between 6 and 21
+                                          then interval '115 minutes' else interval '235 minutes' end
+    from school_links l join sync_tokens st on st.user_id = l.user_id
+   where l.mitid_username is not null or jsonb_array_length(l.feeds) > 0;
+end $$;
+revoke execute on function school_jobs(text) from public, anon, authenticated;
+grant execute on function school_jobs(text) to anon;
+
+create or replace function school_job_update(p_key text, p_user uuid, p jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not server_key_ok(p_key) then raise exception 'bad key'; end if;
+  update school_links set
+    status        = case when p ? 'status' then p->>'status' else status end,
+    aula_session  = case when p ? 'aula_session' then p->>'aula_session' else aula_session end,
+    session_import = case when p ? 'aula_session' then null else session_import end,
+    login_qr1     = case when p ? 'login_qr1' then p->>'login_qr1' else login_qr1 end,
+    login_qr2     = case when p ? 'login_qr2' then p->>'login_qr2' else login_qr2 end,
+    login_otp     = case when p ? 'login_otp' then p->>'login_otp' else login_otp end,
+    login_note    = case when p ? 'login_note' then left(p->>'login_note', 300) else login_note end,
+    login_updated = case when p ?| array['status','login_qr1','login_otp','login_note'] then now() else login_updated end,
+    last_result   = case when p ? 'last_result' then left(p->>'last_result', 500) else last_result end,
+    last_sync_at  = case when (p->>'synced')::boolean then now() else last_sync_at end,
+    sync_requested = case when (p->>'synced')::boolean then false else sync_requested end
+   where user_id = p_user;
+end $$;

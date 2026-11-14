@@ -64,7 +64,6 @@ test('the job needs the server key and sees what is due', async () => {
 
 test('login: requested → running with QR → ok; a stale login is given up', async () => {
   await as(DAD, 'select school_link_login()');
-  assert.equal((await job('select * from school_jobs($1)', [KEY]))[0].due, true);
   await job(`select school_job_update($1, $2, '{"status":"login_running","login_qr1":"<svg/>","login_otp":null}')`, [KEY, DAD]);
   const l = await one(DAD, 'select status, login_qr1 from school_links');
   assert.equal(l.status, 'login_running'); assert.equal(l.login_qr1, '<svg/>');
@@ -97,6 +96,23 @@ test('the job brings calendars in through sync_calendar with the parent sync tok
   const m = (await job(`select sync_calendar($1, 'Motionsdag', '2026-12-02T00:00:00+01:00', '2026-12-03T00:00:00+01:00', 'Yes', 'Aula – Carl') as m`, [tok]))[0].m;
   assert.match(m, /1 nye kalendere/);
   assert.ok((await q(`select 1 from user_calendars where name = 'Aula – Carl' and user_id = $1`, [DAD])).length);
+});
+
+test('login from the phone: the sync code hands over a session; the job stores it encrypted', async () => {
+  const tok = (await one(DAD, 'select token from my_sync_token()')).token;
+  const session = { username: 'dad3', tokens: { access_token: 'a', refresh_token: 'r', expires_at: 1 }, cookies: {} };
+  await assert.rejects(job(`select school_session_import('wrong', 'dad3', $1)`, [JSON.stringify(session)]), /Ukendt/);
+  const kidTok = (await one(KID, 'select token from my_sync_token()').catch(() => null))?.token;
+  if (kidTok) await assert.rejects(job(`select school_session_import($1, 'k', $2)`, [kidTok, JSON.stringify(session)]), /mor og far/);
+  await assert.rejects(job(`select school_session_import($1, 'dad3', '{"x":1}')`, [tok]), /Ugyldigt/);
+  await job(`select school_session_import($1, 'dad3', $2)`, [tok, JSON.stringify(session)]);
+  await assert.rejects(as(DAD, 'select session_import from school_links'), /permission denied/);
+  const j = (await job('select * from school_jobs($1)', [KEY]))[0];
+  assert.equal(j.due, true); assert.equal(j.session_import.tokens.refresh_token, 'r');
+  assert.equal((await one(DAD, 'select status, mitid_username from school_links')).mitid_username, 'dad3');
+  await job(`select school_job_update($1, $2, '{"aula_session": "enc"}')`, [KEY, DAD]);
+  const after = (await q('select session_import, aula_session from school_links'))[0];
+  assert.equal(after.session_import, null); assert.equal(after.aula_session, 'enc');
 });
 
 test('unlinking removes the link and the messages', async () => {

@@ -2766,7 +2766,25 @@ function schoolLoginBox() {
       ${l.login_otp ? `<p class="meta">${esc(t('sc.otp'))}</p><div class="code login-code">${esc(l.login_otp)}</div><p class="hint">${esc(t('sc.approve'))}</p>` : ''}
       ${l.login_qr1 ? `<p class="meta">${esc(t('sc.scan'))}</p><div class="mitid-qr"><img id="mitidQr" alt="MitID QR" src="${svgSrc(l.login_qr1)}"></div>` : ''}`;
   }
-  return `${st}${l.mitid_username ? `<button type="button" class="${l.status === 'ok' ? 'small' : 'primary'}" data-act="scLogin">🔐 ${esc(t(l.status === 'off' ? 'sc.login' : 'sc.loginAgain'))}</button>` : ''}`;
+  return `${st}${l.mitid_username ? phoneLoginGuide(l) : ''}`;
+}
+
+// STIL blocks MitID logins from servers, so the login runs once on the phone in
+// a-Shell (school/aulalogin.py) and the server keeps the session alive after that.
+const ASHELL_URL = 'https://apps.apple.com/app/id1473805438';
+const LOGIN_SCRIPT = 'https://raw.githubusercontent.com/christoffergroenfeldt-cyber/happylife/main/school/aulalogin.py';
+const phoneLoginLine = (token, user) => 'pip install --no-deps aula==0.8.2 && pip install beautifulsoup4 click html2text httpx qrcode tzdata'
+  + ` && curl -L -o aulalogin.py ${LOGIN_SCRIPT} && python3 aulalogin.py ${token} ${user}`;
+
+function phoneLoginGuide(l) {
+  const open = l.status !== 'ok';
+  return `<details class="phone-login" ${open ? 'open' : ''}><summary>📱 ${esc(t(l.status === 'ok' ? 'sc.loginAgain' : 'sc.login'))}</summary>
+    <p class="hint">${esc(t('sc.phoneWhy'))}</p>
+    <ol class="steps">
+      <li>${esc(t('sc.phone1'))} <a href="${ASHELL_URL}" target="_blank" rel="noopener">a-Shell</a></li>
+      <li>${esc(t('sc.phone2'))}<br><button type="button" class="small" data-act="scCopyLine">📋 ${esc(t('sc.copyLine'))}</button></li>
+      <li>${esc(t('sc.phone3'))}</li>
+    </ol></details>`;
 }
 
 function schoolSection() {
@@ -3331,6 +3349,12 @@ const ACTIONS = {
     document.getElementById('feedRows')?.insertAdjacentHTML('beforeend', feedRow({ name: 'ForældreIntra (direkte)' }));
   },
   scDelFeed: (id, el) => { el.closest('.feed-row')?.remove(); },
+  scCopyLine: async () => {
+    if (!S.sync?.token) { await run(sb.rpc('my_sync_token')); await refresh(); }
+    const line = phoneLoginLine(S.sync.token, S.school.mitid_username);
+    try { await navigator.clipboard.writeText(line); toast(t('copied')); }
+    catch { prompt(t('sc.copyLine'), line); }
+  },
   scLogin: async () => {
     await run(sb.rpc('school_link_login'));
     await refresh();

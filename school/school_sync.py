@@ -6,8 +6,9 @@ Runs in GitHub Actions (.github/workflows/school-sync.yml) every few minutes:
   python school/school_sync.py run     -> does the work (needs requirements.txt)
 
 For each parent who linked school under Setup → Skole direkte:
-  * a MitID login asked for in the app: runs it, showing the QR code / code
-    from MitID in the app until it's approved in the MitID app
+  * a MitID login from the parent's phone (school/aulalogin.py in a-Shell –
+    STIL blocks MitID logins from servers) arrives in session_import and is
+    stored encrypted; after that, token refresh keeps it alive
   * Aula's calendar (+ the iCal feeds) go into the app through sync_calendar()
     – the same path as the iPhone Shortcut – as calendars "Aula – <child>"
   * Aula messages (latest per thread) and posts go to school_messages
@@ -33,7 +34,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DAYS_AHEAD = 365
-LOGIN_TIMEOUT = 300  # seconds to wait for the MitID app
 
 
 def config():
@@ -118,47 +118,6 @@ def clean_title(s):
 
 
 # ---------------- Aula
-
-async def aula_login(db, job):
-    """Run the MitID flow; show QR / code in the app while it waits."""
-    from aula.auth.mitid_client import MitIDAuthClient
-    from aula.auth_flow import _build_token_data
-    import qrcode.image.svg
-
-    user = job['user_id']
-    await db.update(user, status='login_running', login_note='Starter MitID…',
-                    login_qr1=None, login_qr2=None, login_otp=None)
-
-    def svg(qr):
-        return qr.make_image(image_factory=qrcode.image.svg.SvgPathImage).to_string(encoding='unicode')
-
-    async with MitIDAuthClient(mitid_username=job['mitid_username'], timeout=60) as ac:
-        task = asyncio.create_task(ac.authenticate())
-        shown = None
-        t0 = time.time()
-        while not task.done():
-            bc = getattr(ac, '_mitid_client', None)
-            if bc is not None:
-                qr1, qr2 = getattr(bc, 'qr1', None), getattr(bc, 'qr2', None)
-                otp = getattr(bc, 'otp_code', None)
-                note = getattr(bc, 'status_message', None)
-                state = (id(qr1), id(qr2), otp, note)
-                if state != shown:
-                    shown = state
-                    await db.update(user,
-                                    login_qr1=svg(qr1) if qr1 else None,
-                                    login_qr2=svg(qr2) if qr2 else None,
-                                    login_otp=otp, login_note=note)
-            if time.time() - t0 > LOGIN_TIMEOUT:
-                task.cancel()
-                break
-            await asyncio.sleep(0.7)
-        try:
-            await task
-        except asyncio.CancelledError:
-            raise RuntimeError('MitID blev ikke godkendt i tide – prøv igen')
-        return _build_token_data(job['mitid_username'], ac.tokens, dict(ac.cookies))
-
 
 async def aula_refresh(td):
     from aula.auth.mitid_client import MitIDAuthClient
@@ -324,16 +283,14 @@ async def do_job(db, http, job):
 
     if job['mitid_username']:
         td = None
-        if job['status'] == 'login_requested':
-            try:
-                td = await aula_login(db, job)
-                await db.update(user, status='ok', login_qr1=None, login_qr2=None, login_otp=None,
-                                login_note='Logget ind ✓',
-                                aula_session=fernet().encrypt(json.dumps(td).encode()).decode())
-            except Exception as e:
-                await db.update(user, status='login_needed', login_qr1=None, login_qr2=None, login_otp=None,
-                                login_note=f'Login mislykkedes: {e}'[:300])
-                print(f'login failed: {type(e).__name__}', file=sys.stderr)
+        if job.get('session_import'):
+            # a fresh login from the parent's phone (school/aulalogin.py): keep it encrypted
+            td = job['session_import']
+            await db.update(user, status='ok',
+                            aula_session=fernet().encrypt(json.dumps(td).encode()).decode())
+        elif job['status'] == 'login_requested':
+            # STIL's bot protection blocks MitID logins from servers – the login is done on the phone
+            await db.update(user, status='login_needed', login_note='Log ind fra telefonen – se vejledningen')
         elif job['aula_session'] and job['status'] in ('ok', 'error'):
             try:
                 td = json.loads(fernet().decrypt(job['aula_session'].encode()))
@@ -389,8 +346,7 @@ async def run():
     async with httpx.AsyncClient(timeout=60) as http:
         db = Db(http)
         jobs = await db.rpc('school_jobs', {'p_key': KEY})
-        # logins first, so nobody waits with the MitID app open
-        for job in sorted((j for j in jobs if j['due']), key=lambda j: j['status'] != 'login_requested'):
+        for job in (j for j in jobs if j['due']):
             try:
                 await do_job(db, http, job)
             except Exception as e:
@@ -399,10 +355,6 @@ async def run():
                     await db.update(job['user_id'], synced=True, last_result=f'Fejl: {e}'[:300])
                 except Exception:
                     pass
-        # a login asked for while we were busy: go again instead of waiting for the next run
-        again = [j for j in await db.rpc('school_jobs', {'p_key': KEY}) if j['status'] == 'login_requested']
-        for job in again:
-            await do_job(db, http, job)
 
 
 if __name__ == '__main__':
