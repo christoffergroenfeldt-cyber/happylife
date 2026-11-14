@@ -617,3 +617,4 @@ details.fold > summary h2 { flex: 1; }
 details.fold > summary::after { content: '▾'; color: var(--muted); font-size: 1.1rem; margin-left: 8px; transition: transform .15s; }
 details.fold:not([open]) > summary::after { transform: rotate(-90deg); }
 details.fold > summary + * { margin-top: 0; }
+.also .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px 10px; margin-bottom: 8px; }

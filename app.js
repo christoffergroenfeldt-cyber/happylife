@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '40'; // keep in step with CACHE in sw.js
+const APP_VERSION = '41'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -1782,6 +1782,9 @@ function choreSetForm(placeId, choreId) {
   const recs = ['none', 'daily', 'weekdays', 'weekly', 'monthly', 'custom', 'yearly'];
   const cur = tk ? tk.recurrence : 'weekly';
   const on = 'daily weekdays weekly monthly custom yearly';
+  // the other rooms in the same zone, to copy this chore and frequency to
+  const others = p.daily ? [] : S.places.filter((o) => o.id !== p.id && !o.daily && zoneOf(o) === zoneOf(p))
+    .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
   openDialog(`
     <form id="choreForm" class="form">
       <h2>${esc(p.daily ? c.name : `${c.name} – ${p.name}`)}</h2>
@@ -1791,6 +1794,11 @@ function choreSetForm(placeId, choreId) {
       <label data-rec="${on}">${t('need')}<input name="need" type="number" min="1" max="20" value="${tk?.need || 1}"></label>
       <label data-rec="${on}">⭐ ${t('points')}<input name="points" type="number" min="0" max="1000" value="${tk?.points || 0}"></label>
       <label data-rec="${on}">${t('note')}<input name="notes" value="${esc(tk?.notes || '')}"></label>
+      ${others.length ? `<fieldset class="also"><legend>${esc(t('house.alsoIn'))}</legend>
+        <div class="checks">${others.map((o) => { const ot = houseTask(o.id, choreId);
+          return `<label class="check"><input type="checkbox" name="also" value="${o.id}"><span>${esc(o.name)}${ot ? ` <small>(${esc(recShort(ot))})</small>` : ''}</span></label>`; }).join('')}</div>
+        <button type="button" class="small" id="alsoAll">${esc(t('house.alsoAll'))}</button>
+        <p class="hint">${esc(t('house.alsoHelp'))}</p></fieldset>` : ''}
       <div class="btns"><span class="grow"></span>
         <button type="button" data-act="close">${t('cancel')}</button>
         <button class="primary" type="submit">${t('save')}</button></div>
@@ -1801,23 +1809,34 @@ function choreSetForm(placeId, choreId) {
     form.querySelectorAll('[data-rec]').forEach((el) => { el.hidden = !el.dataset.rec.split(' ').includes(r); });
   };
   form.elements.recurrence.onchange = sync; sync();
+  const allBtn = form.querySelector('#alsoAll');
+  if (allBtn) allBtn.onclick = () => {
+    const boxes = [...form.querySelectorAll('input[name=also]')];
+    const to = boxes.some((b) => !b.checked);
+    boxes.forEach((b) => { b.checked = to; });
+  };
   form.onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(form);
     const rec = f.get('recurrence');
-    if (rec === 'none') {
-      if (tk) await run(sb.from('tasks').delete().eq('id', tk.id));
-    } else {
+    // this room plus any rooms ticked under "also in"
+    const targets = [p, ...f.getAll('also').map((id) => byId(S.places, id)).filter(Boolean)];
+    for (const pl of targets) {
+      const cur = houseTask(pl.id, choreId);
+      if (rec === 'none') {
+        if (cur) await run(sb.from('tasks').delete().eq('id', cur.id));
+        continue;
+      }
       const row = {
-        title: p.daily ? c.name : `${c.name} – ${p.name}`, notes: f.get('notes').trim() || null,
+        title: pl.daily ? c.name : `${c.name} – ${pl.name}`, notes: f.get('notes').trim() || null,
         recurrence: rec, interval_days: rec === 'custom' ? Math.max(1, Number(f.get('interval_days')) || 1) : null,
         need: Math.min(20, Math.max(1, Number(f.get('need')) || 1)),
         points: Math.min(1000, Math.max(0, Math.round(Number(f.get('points')) || 0))),
-        open: true, roles: HOUSE_ROLES, assignees: [], place_id: placeId, chore_id: choreId,
+        open: true, roles: HOUSE_ROLES, assignees: [], place_id: pl.id, chore_id: choreId,
       };
       // keep the start date when only the details change, so periods don't shift
-      if (!tk || tk.recurrence !== rec || tk.interval_days !== row.interval_days) row.start_date = today();
-      if (tk) await run(sb.from('tasks').update(row).eq('id', tk.id));
+      if (!cur || cur.recurrence !== rec || cur.interval_days !== row.interval_days) row.start_date = today();
+      if (cur) await run(sb.from('tasks').update(row).eq('id', cur.id));
       else await run(sb.from('tasks').insert(row));
     }
     closeDialog(); await refresh();
