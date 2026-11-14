@@ -40,10 +40,7 @@ def config():
     js = (ROOT / 'config.js').read_text()
     url = re.search(r"SUPABASE_URL\s*=\s*'([^']+)'", js).group(1)
     anon = re.search(r"SUPABASE_ANON_KEY\s*=\s*'([^']+)'", js).group(1)
-    key = os.environ.get('HL_SCHOOL_KEY', '').strip()
-    if not key:
-        sys.exit('HL_SCHOOL_KEY secret is missing')
-    return url, anon, key
+    return url, anon, os.environ.get('HL_SCHOOL_KEY', '').strip()
 
 
 URL, ANON, KEY = config()
@@ -60,7 +57,18 @@ def rpc_sync(name, args):
 
 
 def check():
-    jobs = rpc_sync('school_jobs', {'p_key': KEY})
+    # Not set up yet (no secret, or the database without the school tables): a quiet "no"
+    # instead of a failed run every 5 minutes
+    if not KEY:
+        print('work=no')
+        print('HL_SCHOOL_KEY secret is not set – see README, School direct', file=sys.stderr)
+        return
+    try:
+        jobs = rpc_sync('school_jobs', {'p_key': KEY})
+    except Exception as e:
+        print('work=no')
+        print(f'check failed: {type(e).__name__}', file=sys.stderr)
+        return
     due = [j for j in jobs if j['due']]
     print(f'work={"yes" if due else "no"}')
     print(f'links: {len(jobs)}, due: {len(due)}', file=sys.stderr)
