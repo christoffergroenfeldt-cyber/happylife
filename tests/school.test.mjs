@@ -91,6 +91,18 @@ test('messages: parents of the family read them, children do not', async () => {
   await assert.rejects(as(DAD, `insert into school_messages(family_id, user_id, kind, ext_id) values ($1, $2, 'post', 'x')`, [fam.id, DAD]), /permission denied/);
 });
 
+test('read / unread is per app user', async () => {
+  const [m] = await as(DAD, `select id from school_messages where ext_id = 't1'`);
+  await as(DAD, `insert into school_reads(message_id) values ($1)`, [m.id]);
+  assert.equal((await as(DAD, 'select * from school_reads')).length, 1);
+  assert.equal((await as(MOM, 'select * from school_reads')).length, 0, 'mom still has it unread');
+  await assert.rejects(as(KID, `insert into school_reads(message_id) values ($1)`, [m.id]), /row-level security/);
+  await as(MOM, 'select school_mark_all_read()');
+  assert.equal((await as(MOM, 'select * from school_reads')).length, 2);
+  await as(DAD, `delete from school_reads where message_id = $1`, [m.id]);
+  assert.equal((await as(DAD, 'select * from school_reads')).length, 0);
+});
+
 test('the job brings calendars in through sync_calendar with the parent sync token', async () => {
   const tok = (await job('select * from school_jobs($1)', [KEY]))[0].sync_token;
   const m = (await job(`select sync_calendar($1, 'Motionsdag', '2026-12-02T00:00:00+01:00', '2026-12-03T00:00:00+01:00', 'Yes', 'Aula – Carl') as m`, [tok]))[0].m;

@@ -2240,3 +2240,28 @@ begin
     sync_requested = case when (p->>'synced')::boolean then false else sync_requested end
    where user_id = p_user;
 end $$;
+
+-- Read / unread per Happy Life user (not Aula's own flag): a row = this person has read it
+create table if not exists school_reads (
+  user_id    uuid not null default auth.uid() references auth.users on delete cascade,
+  message_id uuid not null references school_messages on delete cascade,
+  read_at    timestamptz not null default now(),
+  primary key (user_id, message_id)
+);
+alter table school_reads enable row level security;
+drop policy if exists sr_own on school_reads;
+create policy sr_own on school_reads for all using (user_id = auth.uid())
+  with check (user_id = auth.uid() and i_am_parent()
+              and exists (select 1 from school_messages m where m.id = message_id and m.family_id = my_family()));
+revoke all on school_reads from anon, authenticated;
+grant select, insert, delete on school_reads to authenticated;
+
+create or replace function school_mark_all_read()
+returns void language sql security definer set search_path = public as $$
+  insert into school_reads(user_id, message_id)
+  select auth.uid(), m.id from school_messages m
+   where m.family_id = my_family() and i_am_parent()
+  on conflict do nothing
+$$;
+revoke execute on function school_mark_all_read() from public, anon;
+grant execute on function school_mark_all_read() to authenticated;

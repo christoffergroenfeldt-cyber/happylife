@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '46'; // keep in step with CACHE in sw.js
+const APP_VERSION = '47'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -51,7 +51,7 @@ const S = {
   packs: [], packDone: [], todayDay: null,
   fdReady: false, fdOrder: [], fdIdeas: [], fdWeeks: [],
   watches: [], wpoints: [], pricesReady: false,
-  school: null, schoolMsgs: [], schoolFeeds: null,
+  school: null, schoolMsgs: [], schoolFeeds: null, schoolRead: new Set(),
   skemaWho: null, skemaWeek: null, skemaDay: null, skemaHidden: null,
   tab: 'today', authStep: 'email', authEmail: '', setupMode: pendingInvite() ? 'join' : 'create', ideaShift: {}, pushOn: false,
 };
@@ -173,12 +173,14 @@ async function loadAll() {
     ]);
     Object.assign(S, { packs, packDone });
     // School direct (a missing table just means an older database)
-    const [sl, sm] = await Promise.all([
+    const [sl, sm, sr] = await Promise.all([
       sb.from('school_links').select(SCHOOL_COLS).maybeSingle(),
       sb.from('school_messages').select('*').gte('sent_at', isoMinus(60)).order('sent_at', { ascending: false }).limit(100),
+      sb.from('school_reads').select('message_id'),
     ]);
     S.school = sl.error ? undefined : sl.data;
     S.schoolMsgs = sm.data || [];
+    S.schoolRead = new Set((sr.data || []).map((r) => r.message_id));
   }
 }
 
@@ -2836,11 +2838,15 @@ function schoolPoll() {
   }, 1000);
 }
 
+// Read / unread is per Happy Life user (school_reads), not Aula's own flag
+const schoolUnread = (m) => !S.schoolRead.has(m.id);
+
 function schoolMsgRow(m) {
-  return `<div class="row school-msg ${m.unread ? 'unread' : ''}" data-act="scOpen" data-id="${m.id}">
+  const unread = schoolUnread(m);
+  return `<div class="row school-msg ${unread ? 'unread' : ''}" data-act="scOpen" data-id="${m.id}">
     <div class="lead big">${m.kind === 'post' ? '📰' : '✉️'}</div>
     <div class="body"><div class="ttl">${m.important ? '❗ ' : ''}${esc(m.title || t('sc.' + m.kind))}</div>
-      <div class="meta">${esc(m.sender || '')}${m.sent_at ? ` · ${esc(fmtDate(m.sent_at.slice(0, 10)))}` : ''}${m.unread ? ` · <b>${esc(t('sc.unread'))}</b>` : ''}</div></div></div>`;
+      <div class="meta">${esc(m.sender || '')}${m.sent_at ? ` · ${esc(fmtDate(m.sent_at.slice(0, 10)))}` : ''}${unread ? ` · <b>${esc(t('sc.unread'))}</b>` : ''}</div></div></div>`;
 }
 
 // Today: the newest from the last 14 days (unread and important first)
@@ -2848,11 +2854,11 @@ function schoolInbox() {
   if (!S.school || !S.schoolMsgs.length) return '';
   const since = isoMinus(14);
   const recent = S.schoolMsgs.filter((m) => (m.sent_at || '') >= since)
-    .sort((a, b) => (b.unread - a.unread) || (b.important - a.important) || (b.sent_at || '').localeCompare(a.sent_at || ''));
+    .sort((a, b) => (schoolUnread(b) - schoolUnread(a)) || (b.important - a.important) || (b.sent_at || '').localeCompare(a.sent_at || ''));
   const body = recent.length ? `<div class="list">${recent.slice(0, 5).map(schoolMsgRow).join('')}</div>`
     : `<p class="empty">${esc(t('sc.none'))}</p>`;
   return fold('school', esc(t('sc.inbox')), `${body}
-    <button class="small" data-act="scAll">${esc(t('sc.all', { n: S.schoolMsgs.length }))}</button>`, recent.filter((m) => m.unread).length || '');
+    <button class="small" data-act="scAll">${esc(t('sc.all', { n: S.schoolMsgs.length }))}</button>`, recent.filter(schoolUnread).length || '');
 }
 
 function schoolMsgDialog(m) {
@@ -2860,13 +2866,14 @@ function schoolMsgDialog(m) {
     <h2>${m.important ? '❗ ' : ''}${esc(m.title || t('sc.' + m.kind))}</h2>
     <p class="meta">${esc(t('sc.' + m.kind))} · ${esc(m.sender || '')}${m.sent_at ? ` · ${esc(fmtWhen(m.sent_at))}` : ''}</p>
     <div class="msg-body">${esc(m.body || '').replace(/\n/g, '<br>')}</div>
-    <div class="btns"><span class="grow"></span><button type="button" data-act="close">${esc(t('sc.close'))}</button></div></div>`);
+    <div class="btns"><button type="button" class="link" data-act="scUnread" data-id="${m.id}">${esc(t('sc.markUnread'))}</button>
+      <span class="grow"></span><button type="button" data-act="close">${esc(t('sc.close'))}</button></div></div>`);
 }
 
 function schoolAllDialog() {
   openDialog(`<div class="form"><h2>${esc(t('sc.inbox'))}</h2>
     <div class="list">${S.schoolMsgs.map(schoolMsgRow).join('')}</div>
-    <div class="btns"><span class="grow"></span><button type="button" data-act="close">${esc(t('sc.close'))}</button></div></div>`);
+    <div class="btns">${S.schoolMsgs.some(schoolUnread) ? `<button type="button" class="link" data-act="scAllRead">${esc(t('sc.markAllRead'))}</button>` : ''}<span class="grow"></span><button type="button" data-act="close">${esc(t('sc.close'))}</button></div></div>`);
 }
 
 // ------------------------------------------------------------ price watch
@@ -3365,7 +3372,23 @@ const ACTIONS = {
     if (!confirm(t('sc.removeConfirm'))) return;
     await run(sb.rpc('school_link_remove')); S.schoolFeeds = null; await refresh();
   },
-  scOpen: (id) => { const m = byId(S.schoolMsgs, id); if (m) schoolMsgDialog(m); },
+  scOpen: async (id) => {
+    const m = byId(S.schoolMsgs, id);
+    if (!m) return;
+    schoolMsgDialog(m);
+    if (schoolUnread(m)) {
+      S.schoolRead.add(m.id); render();
+      await sb.from('school_reads').upsert({ message_id: m.id }, { onConflict: 'user_id,message_id', ignoreDuplicates: true });
+    }
+  },
+  scUnread: async (id) => {
+    S.schoolRead.delete(id); closeDialog(); render();
+    await run(sb.from('school_reads').delete().eq('message_id', id));
+  },
+  scAllRead: async () => {
+    S.schoolMsgs.forEach((m) => S.schoolRead.add(m.id)); closeDialog(); render();
+    await run(sb.rpc('school_mark_all_read'));
+  },
   scAll: () => schoolAllDialog(),
   openPrices: () => { S.tab = 'prices'; render(); window.scrollTo(0, 0); },
   newWatch: () => watchForm(null),
