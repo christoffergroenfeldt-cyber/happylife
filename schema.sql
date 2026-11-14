@@ -2416,3 +2416,31 @@ begin
   delete from school_messages where user_id = auth.uid();
   delete from school_links where user_id = auth.uid();
 end $$;
+
+-- GitHub's own schedule doesn't fire for school-sync, so Supabase starts it: every 10 minutes
+-- (pg_cron job happylife-school-sync), if a sync is due (same rule as school_jobs), it dispatches
+-- the workflow with the Vault secret github_dispatch_token (fine-grained PAT: Actions write on happylife only).
+create or replace function school_sync_dispatch()
+returns bigint language plpgsql security definer set search_path = public as $$
+declare tok text; req bigint;
+begin
+  if not exists (
+    select 1 from school_links l
+     where (l.mitid_username is not null or jsonb_array_length(l.feeds) > 0)
+       and (l.session_import is not null or l.sync_requested or l.last_sync_at is null
+            or l.last_sync_at < now() - case when extract(hour from now() at time zone 'Europe/Copenhagen') between 6 and 21
+                                             then interval '115 minutes' else interval '235 minutes' end)) then
+    return null;
+  end if;
+  select decrypted_secret into tok from vault.decrypted_secrets where name = 'github_dispatch_token';
+  if tok is null then return null; end if;
+  select net.http_post(
+    url     := 'https://api.github.com/repos/christoffergroenfeldt-cyber/happylife/actions/workflows/school-sync.yml/dispatches',
+    headers := jsonb_build_object('Authorization', 'Bearer ' || tok, 'Accept', 'application/vnd.github+json',
+                                  'X-GitHub-Api-Version', '2022-11-28', 'User-Agent', 'happylife-supabase'),
+    body    := '{"ref":"main"}'::jsonb) into req;
+  return req;
+end $$;
+revoke execute on function school_sync_dispatch() from public, anon, authenticated;
+-- Run once in the SQL editor (needs pg_cron, pg_net and the Vault secret):
+--   select cron.schedule('happylife-school-sync', '*/10 * * * *', 'select public.school_sync_dispatch()');

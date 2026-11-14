@@ -153,7 +153,9 @@ code (e.g. a parent's address with `+` – `mum+anna@gmail.com` – on Gmail).
 5. When *Aula – …* calendars appear under *Calendar from iPhone*, switch the old phone *AULA …* calendars off to avoid doubles.
 
 The repo is public, so the Action's log shows counts only. The Aula session is stored encrypted with the server key; the app can't read it.
-GitHub pauses scheduled workflows in a public repo after 60 days without commits – re-enable it under Actions if that happens.
+GitHub's own schedule never fired for *School sync*, so Supabase starts it: the pg_cron job `happylife-school-sync`
+calls `school_sync_dispatch()` every 10 minutes, which dispatches the workflow only when a sync is due. It needs the Vault
+secret `github_dispatch_token` (fine-grained token, repo *happylife* only, *Actions: Read and write*; renew it before it expires).
 
 ### Price watch – the price-check Action
 `.github/workflows/price-check.yml` runs every 5 minutes. A quick step asks the database (`price_jobs()`, with the
