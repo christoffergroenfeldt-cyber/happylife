@@ -38,9 +38,12 @@ jobs:
         continue-on-error: true
         run: |
           claude -p "$(cat ../scripts/price-check-prompt.md)" \
-            --model sonnet --max-turns 200 \
-            --allowedTools "WebSearch,WebFetch,Read,Write" > /dev/null 2> claude.err \
-            && echo "price search finished" || { echo "price search stopped (exit $?)"; grep -ciE "auth|token|login" claude.err | sed 's/^/auth-related lines: /'; }
+            --model sonnet --max-turns 200 --output-format json \
+            --allowedTools "WebSearch,WebFetch,Read,Write" > claude.json 2> claude.err \
+            && echo "price search finished" || echo "price search stopped (exit $?)"
+          # counts and tool names only (the repo is public)
+          node -e "const r=JSON.parse(require('fs').readFileSync('claude.json','utf8'));console.log('turns:',r.num_turns,'| result:',r.subtype,'| error:',r.is_error,'| denied tools:',[...new Set((r.permission_denials||[]).map(d=>d.tool_name))].join(',')||'none','| seconds:',Math.round((r.duration_ms||0)/1000))" || echo "no result summary"
+          grep -ciE "auth|token|login|credit|limit" claude.err | sed 's/^/stderr lines about auth or limits: /'
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       - if: steps.jobs.outputs.work == 'yes'
