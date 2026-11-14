@@ -654,3 +654,6 @@ a.offer { display: inline-flex; align-items: center; padding: 8px 14px; border-r
 .phone-login summary { font-weight: 700; cursor: pointer; padding: 6px 0; }
 .phone-login .steps { padding-left: 20px; margin: 6px 0; line-height: 1.45; }
 .phone-login .steps li { margin-bottom: 8px; }
+a.row.school-item { text-decoration: none; color: inherit; }
+.school-item .go { margin-left: auto; opacity: .5; padding-left: 8px; }
+.school-read .dayhead { font-size: 1rem; margin: 14px 0 4px; text-transform: capitalize; }

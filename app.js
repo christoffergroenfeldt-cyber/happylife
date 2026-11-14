@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '47'; // keep in step with CACHE in sw.js
+const APP_VERSION = '48'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -51,7 +51,7 @@ const S = {
   packs: [], packDone: [], todayDay: null,
   fdReady: false, fdOrder: [], fdIdeas: [], fdWeeks: [],
   watches: [], wpoints: [], pricesReady: false,
-  school: null, schoolMsgs: [], schoolFeeds: null, schoolRead: new Set(),
+  school: null, schoolMsgs: [], schoolFeeds: null, schoolRead: new Set(), schoolItems: [],
   skemaWho: null, skemaWeek: null, skemaDay: null, skemaHidden: null,
   tab: 'today', authStep: 'email', authEmail: '', setupMode: pendingInvite() ? 'join' : 'create', ideaShift: {}, pushOn: false,
 };
@@ -173,14 +173,16 @@ async function loadAll() {
     ]);
     Object.assign(S, { packs, packDone });
     // School direct (a missing table just means an older database)
-    const [sl, sm, sr] = await Promise.all([
+    const [sl, sm, sr, si] = await Promise.all([
       sb.from('school_links').select(SCHOOL_COLS).maybeSingle(),
       sb.from('school_messages').select('*').gte('sent_at', isoMinus(60)).order('sent_at', { ascending: false }).limit(100),
       sb.from('school_reads').select('message_id'),
+      sb.from('school_items').select('*').order('due_date').order('child'),
     ]);
     S.school = sl.error ? undefined : sl.data;
     S.schoolMsgs = sm.data || [];
     S.schoolRead = new Set((sr.data || []).map((r) => r.message_id));
+    S.schoolItems = si.data || [];
   }
 }
 
@@ -782,6 +784,7 @@ function viewToday() {
     ${tasksBlock}
     ${bag}
     <h2>📅 ${esc(t(isToday ? 'td.program' : 'td.programTomorrow'))}</h2>${day}
+    ${parent ? schoolDay(d) : ''}
     ${parent ? schoolInbox() : ''}
     ${isToday ? fold('who', `👨‍👩‍👧‍👦 ${esc(t('pk.whoWhat'))}`, familyTodaySection()) : ''}
     ${fold('snart', `🗓️ ${esc(t('upcoming'))}`, snart, all.length)}
@@ -2861,6 +2864,71 @@ function schoolInbox() {
     <button class="small" data-act="scAll">${esc(t('sc.all', { n: S.schoolMsgs.length }))}</button>`, recent.filter(schoolUnread).length || '');
 }
 
+// MinUddannelse (via Aula): the day's plan per child + the week's ugenoter
+function isoWeekOf(iso) {
+  const dt = new Date(iso + 'T12:00:00Z');
+  const day = (dt.getUTCDay() + 6) % 7;
+  dt.setUTCDate(dt.getUTCDate() - day + 3);               // Thursday of this week
+  const y = dt.getUTCFullYear();
+  const jan4 = new Date(Date.UTC(y, 0, 4));
+  const wk = 1 + Math.round(((dt - jan4) / 864e5 - 3 + ((jan4.getUTCDay() + 6) % 7)) / 7);
+  return `${y}-W${String(wk).padStart(2, '0')}`;
+}
+const weekdayName = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString(
+  { da: 'da-DK', en: 'en-GB', fr: 'fr-FR' }[getLang()], { weekday: 'long' });
+
+function schoolItemRow(x) {
+  const body = `<div class="body"><div class="ttl">${esc(x.title)}</div>
+    <div class="meta">${esc(x.subject || x.grp || '')}${x.done ? ' · ✓' : ''}</div></div>`;
+  return x.url ? `<a class="row school-item" href="${esc(x.url)}" target="_blank" rel="noopener">${body}<span class="go">↗</span></a>`
+    : `<div class="row school-item">${body}</div>`;
+}
+
+function schoolByChild(items) {
+  const kids = [...new Set(items.map((x) => x.child || ''))].sort();
+  return kids.map((k) => `<h3 class="subhead">${esc(k)}</h3>
+    <div class="list">${items.filter((x) => (x.child || '') === k).map(schoolItemRow).join('')}</div>`).join('');
+}
+
+function schoolDay(d) {
+  const tasks = S.schoolItems.filter((x) => x.kind === 'opgave');
+  const notes = S.schoolItems.filter((x) => x.kind === 'ugenote');
+  if (!tasks.length && !notes.length) return '';
+  // on a weekend (or a day without anything) show the next school day within 3 days
+  let day = d;
+  for (let i = 0; i < 3 && !tasks.some((x) => x.due_date === day); i++) day = addDays(day, 1);
+  if (!tasks.some((x) => x.due_date === day)) day = d;
+  const items = tasks.filter((x) => x.due_date === day);
+  const week = isoWeekOf(day);
+  const wnotes = notes.filter((x) => x.week === week);
+  const label = day === today() ? t('td.today') : day === addDays(today(), 1) ? t('td.tomorrow') : weekdayName(day);
+  const body = `${items.length ? schoolByChild(items) : `<p class="empty">${esc(t('sc.noItems'))}</p>`}
+    <div class="acts">${wnotes.map((n) => `<button class="small" data-act="scNote" data-id="${n.id}">📝 ${esc(t('sc.ugenote'))} ${esc(n.grp || '')} · ${esc(n.child || '')}</button>`).join('')}
+      <button class="small" data-act="scWeek" data-id="${week}">${esc(t('sc.wholeWeek'))}</button></div>`;
+  return fold('mu', `📚 ${esc(t('sc.atSchool', { day: label }))}`, body, items.length || '');
+}
+
+function schoolWeekDialog(week) {
+  const items = S.schoolItems.filter((x) => x.kind === 'opgave' && x.week === week);
+  const days = [...new Set(items.map((x) => x.due_date))].sort();
+  const weeks = [...new Set(S.schoolItems.map((x) => x.week))].sort();
+  openDialog(`<div class="form school-read">
+    <h2>📚 ${esc(t('sc.week', { n: Number(week.slice(6)) }))}</h2>
+    <div class="seg">${weeks.map((w) => `<button type="button" data-act="scWeek" data-id="${w}" class="${w === week ? 'on' : ''}">${esc(t('sc.week', { n: Number(w.slice(6)) }))}</button>`).join('')}</div>
+    ${days.map((dd) => `<h2 class="dayhead">${esc(weekdayName(dd))} ${esc(fmtDate(dd, getLang()))}</h2>${schoolByChild(items.filter((x) => x.due_date === dd))}`).join('')
+      || `<p class="empty">${esc(t('sc.noItems'))}</p>`}
+    ${S.schoolItems.filter((x) => x.kind === 'ugenote' && x.week === week).map((n) => `<button class="small" data-act="scNote" data-id="${n.id}">📝 ${esc(t('sc.ugenote'))} ${esc(n.grp || '')} · ${esc(n.child || '')}</button>`).join('')}
+    <div class="btns"><span class="grow"></span><button type="button" data-act="close">${esc(t('sc.close'))}</button></div></div>`);
+}
+
+function schoolNoteDialog(n) {
+  openDialog(`<div class="form school-read">
+    <h2>📝 ${esc(t('sc.ugenote'))} ${esc(n.grp || '')}</h2>
+    <p class="meta">${esc(n.child || '')} · ${esc(t('sc.week', { n: Number(n.week.slice(6)) }))}</p>
+    <div class="msg-body">${esc(n.body || '').replace(/\n/g, '<br>')}</div>
+    <div class="btns"><span class="grow"></span><button type="button" data-act="close">${esc(t('sc.close'))}</button></div></div>`);
+}
+
 function schoolMsgDialog(m) {
   openDialog(`<div class="form school-read">
     <h2>${m.important ? '❗ ' : ''}${esc(m.title || t('sc.' + m.kind))}</h2>
@@ -3390,6 +3458,8 @@ const ACTIONS = {
     await run(sb.rpc('school_mark_all_read'));
   },
   scAll: () => schoolAllDialog(),
+  scWeek: (week) => schoolWeekDialog(week),
+  scNote: (id) => { const n = byId(S.schoolItems, id); if (n) schoolNoteDialog(n); },
   openPrices: () => { S.tab = 'prices'; render(); window.scrollTo(0, 0); },
   newWatch: () => watchForm(null),
   openWatch: (id) => { const w = byId(S.watches, id); if (w) watchDetail(w); },
