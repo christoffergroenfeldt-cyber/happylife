@@ -2327,3 +2327,92 @@ end $$;
 
 -- MinUddannelse task type (e.g. SimpelLektie) and the teacher's text (body, fetched via minuddannelse.net)
 alter table school_items add column if not exists otype text;
+
+-- Lektieliste: lektier and "husk" items that Claude picks out of the MinUddannelse texts
+-- (school-sync workflow; only when the texts change). Checked off per family.
+alter table school_links add column if not exists homework_hash text;
+
+create table if not exists school_homework (
+  id         uuid primary key default gen_random_uuid(),
+  family_id  uuid not null references families on delete cascade,
+  user_id    uuid not null references auth.users on delete cascade,
+  key        text not null,
+  child      text,
+  due_date   date,
+  kind       text not null check (kind in ('lektie','husk')),
+  text       text not null,
+  subject    text,
+  source     text,                       -- school_items ext_id it came from
+  done       boolean not null default false,
+  done_by    uuid references auth.users on delete set null,
+  done_at    timestamptz,
+  created_at timestamptz not null default now(),
+  unique (user_id, key)
+);
+create index if not exists school_homework_family on school_homework(family_id, due_date);
+alter table school_homework enable row level security;
+drop policy if exists sh_select on school_homework;
+create policy sh_select on school_homework for select using (family_id = my_family() and i_am_parent());
+revoke all on school_homework from anon, authenticated;
+grant select on school_homework to authenticated;
+
+create or replace function school_homework_done(p_id uuid, p_done boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update school_homework set done = p_done, done_by = case when p_done then auth.uid() end,
+         done_at = case when p_done then now() end
+   where id = p_id and family_id = my_family() and i_am_parent();
+  if not found then raise exception 'not found'; end if;
+end $$;
+
+-- Job: the texts' hash from last time (skip Claude when nothing changed)
+create or replace function school_homework_hash(p_key text, p_user uuid)
+returns text language plpgsql stable security definer set search_path = public as $$
+begin
+  if not server_key_ok(p_key) then raise exception 'bad key'; end if;
+  return (select homework_hash from school_links where user_id = p_user);
+end $$;
+
+-- Job: Claude's list [{child, due_date, kind, text, subject, source}]. Same item (child + date + text)
+-- keeps its check mark; items no longer in the list go, unless already checked off.
+create or replace function school_homework_put(p_key text, p_user uuid, p_hash text, p_items jsonb)
+returns int language plpgsql security definer set search_path = public as $$
+declare fam uuid; n int; keys text[];
+begin
+  if not server_key_ok(p_key) then raise exception 'bad key'; end if;
+  select family_id into fam from school_links where user_id = p_user;
+  if fam is null then raise exception 'no link'; end if;
+  create temp table hw on commit drop as
+  select md5(lower(coalesce(x->>'child', '')) || '|' || coalesce(x->>'due_date', '') || '|' ||
+             lower(regexp_replace(coalesce(x->>'text', ''), '\s+', ' ', 'g'))) as key,
+         left(x->>'child', 60) as child,
+         case when x->>'due_date' ~ '^\d{4}-\d{2}-\d{2}$' then (x->>'due_date')::date end as due_date,
+         x->>'kind' as kind, left(btrim(x->>'text'), 500) as text, left(x->>'subject', 100) as subject,
+         left(x->>'source', 100) as source
+    from jsonb_array_elements(coalesce(p_items, '[]'::jsonb)) x
+   where x->>'kind' in ('lektie','husk') and char_length(btrim(coalesce(x->>'text', ''))) > 0;
+  select array_agg(key) into keys from hw;
+  delete from school_homework h where h.user_id = p_user and not h.done and h.key <> all(coalesce(keys, '{}'));
+  insert into school_homework(family_id, user_id, key, child, due_date, kind, text, subject, source)
+  select distinct on (key) fam, p_user, key, child, due_date, kind, text, subject, source from hw
+  on conflict (user_id, key) do update set child = excluded.child, due_date = excluded.due_date, kind = excluded.kind,
+         text = excluded.text, subject = excluded.subject, source = excluded.source;
+  get diagnostics n = row_count;
+  delete from school_homework where user_id = p_user and due_date < current_date - 14;
+  update school_links set homework_hash = p_hash where user_id = p_user;
+  return n;
+end $$;
+
+revoke execute on function school_homework_done(uuid, boolean), school_homework_hash(text, uuid),
+  school_homework_put(text, uuid, text, jsonb) from public, anon, authenticated;
+grant execute on function school_homework_done(uuid, boolean) to authenticated;
+grant execute on function school_homework_hash(text, uuid), school_homework_put(text, uuid, text, jsonb) to anon;
+
+create or replace function school_link_remove()
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  delete from school_homework where user_id = auth.uid();
+  delete from school_items where user_id = auth.uid();
+  delete from school_messages where user_id = auth.uid();
+  delete from school_links where user_id = auth.uid();
+end $$;

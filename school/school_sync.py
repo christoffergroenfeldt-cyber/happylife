@@ -12,6 +12,10 @@ For each parent who linked school under Setup → Skole direkte:
   * Aula's calendar (+ the iCal feeds) go into the app through sync_calendar()
     – the same path as the iPhone Shortcut – as calendars "Aula – <child>"
   * Aula messages (latest per thread) and posts go to school_messages
+  * MinUddannelse ugenoter and opgaver (with the teachers' text) go to
+    school_items; when they change, Claude (school/lektier-prompt.md) makes the
+    lektieliste: `run` writes work/lektier-input.json, the workflow runs Claude,
+    and `python school/school_sync.py lektier` saves its answer
 
 The repository is public, so the log never shows names, titles, links or
 codes – only counts. Details go to the parent's own row in the database.
@@ -106,6 +110,8 @@ def first_name(name):
 
 CPH = None
 AULA_EXTRA = {}
+HOMEWORK_JOBS = []   # texts for Claude's lektieliste (see school/lektier-prompt.md)
+WORK = ROOT / 'work'
 
 
 def local_iso(dt):
@@ -493,6 +499,7 @@ async def do_job(db, http, job):
                                                           'p_items': [i for i in mu_items if i['week'] in ok]})
                         notes.append(f'MinUddannelse: {sum(i["kind"] == "ugenote" for i in mu_items)} ugenoter, '
                                      f'{sum(i["kind"] == "opgave" for i in mu_items)} opgaver')
+                        await queue_homework(db, user, [i for i in mu_items if i['week'] in ok])
                 rows += rows_a
                 aula_ok = True
                 notes.append(f'Aula: {len(rows_a)} i kalenderen, {len(items)} beskeder/opslag')
@@ -528,6 +535,53 @@ async def do_job(db, http, job):
     print(f'done: {len(rows)} calendar rows, {len(items or [])} items, aula={aula_ok}', file=sys.stderr)
 
 
+async def queue_homework(db, user, items):
+    """Queue the MinUddannelse texts for Claude's lektieliste – only when they changed."""
+    if not os.environ.get('HAS_CLAUDE'):
+        return
+    texts = sorted([i['kind'], i['ext_id'], i['week'], i.get('child') or '', i.get('due_date') or '',
+                    i.get('subject') or '', i.get('title') or '', i.get('body') or ''] for i in items)
+    texts = [t for t in texts if t[7] or t[0] == 'opgave']
+    if not texts:
+        return
+    h = hashlib.sha256(json.dumps([date.today().isoformat(), texts]).encode()).hexdigest()
+    if await db.rpc('school_homework_hash', {'p_key': KEY, 'p_user': user}) == h:
+        return
+    HOMEWORK_JOBS.append({
+        'user': user, 'hash': h, 'today': date.today().isoformat(),
+        'children': sorted({i['child'] for i in items if i.get('child')}),
+        'items': [{'id': i['ext_id'], 'kind': i['kind'], 'child': i.get('child'),
+                   **({'date': i.get('due_date'), 'subject': i.get('subject'), 'title': i.get('title')}
+                      if i['kind'] == 'opgave' else {'week': i['week']}),
+                   'text': (i.get('body') or '')[:4000]} for i in items],
+    })
+
+
+async def save_homework():
+    """After Claude: lektier-output.json -> school_homework (per job, checked)."""
+    import httpx
+    jobs = json.loads((WORK / 'lektier-jobs.json').read_text())
+    try:
+        out = json.loads((WORK / 'lektier-output.json').read_text())
+    except (OSError, ValueError) as e:
+        print(f'no lektier output: {type(e).__name__}', file=sys.stderr)
+        return
+    by_index = {j.get('index'): j.get('homework') for j in out.get('jobs') or [] if isinstance(j, dict)}
+    async with httpx.AsyncClient(timeout=60) as http:
+        db = Db(http)
+        for i, job in enumerate(jobs):
+            hw = by_index.get(i)
+            if not isinstance(hw, list):
+                print(f'lektier job {i}: missing', file=sys.stderr)
+                continue
+            kids = set(job['children'])
+            ok = [h for h in hw if isinstance(h, dict) and h.get('kind') in ('lektie', 'husk')
+                  and h.get('child') in kids and str(h.get('text') or '').strip()]
+            n = await db.rpc('school_homework_put', {'p_key': KEY, 'p_user': job['user'], 'p_hash': job['hash'],
+                                                    'p_items': ok})
+            print(f'lektier job {i}: {len(ok)} of {len(hw)} kept, {n} saved', file=sys.stderr)
+
+
 async def run():
     global CPH
     import httpx
@@ -547,10 +601,23 @@ async def run():
                     await db.update(job['user_id'], synced=True, last_result=f'Fejl: {e}'[:300])
                 except Exception:
                     pass
+    if HOMEWORK_JOBS:
+        WORK.mkdir(exist_ok=True)
+        (WORK / 'lektier-input.json').write_text(json.dumps(
+            {'jobs': [{'index': i, **{k: j[k] for k in ('today', 'children', 'items')}} for i, j in enumerate(HOMEWORK_JOBS)]},
+            ensure_ascii=False, indent=1))
+        (WORK / 'lektier-jobs.json').write_text(json.dumps(
+            [{k: j[k] for k in ('user', 'hash', 'children')} for j in HOMEWORK_JOBS]))
+        if os.environ.get('GITHUB_OUTPUT'):
+            with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                f.write('lektier=yes\n')
+        print(f'lektier: {len(HOMEWORK_JOBS)} job(s) for Claude', file=sys.stderr)
 
 
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == 'check':
         check()
+    elif len(sys.argv) > 1 and sys.argv[1] == 'lektier':
+        asyncio.run(save_homework())
     else:
         asyncio.run(run())

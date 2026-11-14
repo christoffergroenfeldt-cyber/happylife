@@ -657,3 +657,9 @@ a.offer { display: inline-flex; align-items: center; padding: 8px 14px; border-r
 a.row.school-item { text-decoration: none; color: inherit; }
 .school-item .go { margin-left: auto; opacity: .5; padding-left: 8px; }
 .school-read .dayhead { font-size: 1rem; margin: 14px 0 4px; text-transform: capitalize; }
+.row.hw { width: 100%; text-align: left; background: none; border: 0; font: inherit; color: inherit; align-items: center; gap: 10px; cursor: pointer; }
+.row.hw .check { flex: 0 0 26px; height: 26px; border-radius: 8px; border: 2px solid var(--line, #cfd8c4); display: grid; place-items: center; font-weight: 800; }
+.row.hw.done .check { background: var(--accent, #4b7d33); border-color: transparent; color: #fff; }
+.row.hw.done .ttl { text-decoration: line-through; opacity: .6; }
+.row.hw .body { display: flex; flex-direction: column; }
+.hw-day { text-transform: capitalize; }

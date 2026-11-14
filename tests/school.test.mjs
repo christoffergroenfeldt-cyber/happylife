@@ -116,6 +116,22 @@ test('ugenoter and opgaver: replaced per week, parents only', async () => {
   assert.deepEqual((await as(DAD, 'select kind from school_items')).map((r) => r.kind), ['opgave']);
 });
 
+test('lektieliste: Claude\'s list replaces the old one, check marks survive', async () => {
+  const a = { child: 'Victor', due_date: '2026-11-18', kind: 'lektie', text: 'Læs kapitel 15 og 16', subject: 'Dansk' };
+  const b = { child: 'Elizabeth', due_date: '2026-11-18', kind: 'husk', text: 'Idrætstøj og håndklæde' };
+  await job('select school_homework_put($1, $2, $3, $4)', [KEY, DAD, 'h1', JSON.stringify([a, b, { kind: 'x', text: 'nope' }])]);
+  assert.equal((await job('select school_homework_hash($1, $2) h', [KEY, DAD]))[0].h, 'h1');
+  const rows = await as(MOM, 'select * from school_homework order by kind');
+  assert.equal(rows.length, 2);
+  assert.equal((await as(KID, 'select * from school_homework')).length, 0);
+  await as(MOM, 'select school_homework_done($1, true)', [rows[0].id]);   // husk checked off by mom
+  // next run: same lektie reworded spacing, husk gone from Claude's list -> kept because done
+  await job('select school_homework_put($1, $2, $3, $4)', [KEY, DAD, 'h2', JSON.stringify([{ ...a, text: 'Læs  kapitel 15 og 16' }])]);
+  const after = await as(DAD, 'select kind, done from school_homework order by kind');
+  assert.deepEqual(after.map((r) => [r.kind, r.done]), [['husk', true], ['lektie', false]]);
+  await assert.rejects(as(KID, 'select school_homework_done($1, true)', [rows[1].id]), /not found/);
+});
+
 test('the job brings calendars in through sync_calendar with the parent sync token', async () => {
   const tok = (await job('select * from school_jobs($1)', [KEY]))[0].sync_token;
   const m = (await job(`select sync_calendar($1, 'Motionsdag', '2026-12-02T00:00:00+01:00', '2026-12-03T00:00:00+01:00', 'Yes', 'Aula – Carl') as m`, [tok]))[0].m;

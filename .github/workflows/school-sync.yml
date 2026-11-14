@@ -36,7 +36,29 @@ jobs:
           cache-dependency-path: school/requirements.txt
       - if: steps.check.outputs.work == 'yes'
         run: pip install -q -r school/requirements.txt
-      - if: steps.check.outputs.work == 'yes'
+      - id: run
+        if: steps.check.outputs.work == 'yes'
         run: python school/school_sync.py run
+        env:
+          HL_SCHOOL_KEY: ${{ secrets.HL_SCHOOL_KEY }}
+          HAS_CLAUDE: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' && '1' || '' }}
+      # Lektieliste: only when the MinUddannelse texts changed. Claude reads
+      # work/lektier-input.json and writes work/lektier-output.json (nothing printed).
+      - if: steps.run.outputs.lektier == 'yes'
+        run: npm install -g @anthropic-ai/claude-code >/dev/null 2>&1
+      - if: steps.run.outputs.lektier == 'yes'
+        working-directory: work
+        timeout-minutes: 10
+        continue-on-error: true
+        run: |
+          claude -p "$(cat ../school/lektier-prompt.md)" \
+            --model sonnet --max-turns 20 --output-format json \
+            --allowedTools "Read,Write" > claude.json 2> claude.err \
+            && echo "lektier finished" || echo "lektier stopped (exit $?)"
+          node -e "const r=JSON.parse(require('fs').readFileSync('claude.json','utf8'));console.log('turns:',r.num_turns,'| result:',r.subtype,'| error:',r.is_error,'| seconds:',Math.round((r.duration_ms||0)/1000))" || echo "no result summary"
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      - if: steps.run.outputs.lektier == 'yes'
+        run: python school/school_sync.py lektier
         env:
           HL_SCHOOL_KEY: ${{ secrets.HL_SCHOOL_KEY }}

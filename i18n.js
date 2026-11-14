@@ -274,6 +274,7 @@ const STRINGS = {
     pushNotSupported: 'Notifikationer virker ikke i denne browser.',
     error: 'Noget gik galt', needRole: 'Vælg mindst én rolle.', needTitle: 'Skriv en titel.',
     by: 'af',
+    hw: { title: 'Lektieliste', noDay: 'Uden dato', hint: 'Fundet af Claude i ugeplanerne fra MinUddannelse – tryk for at krydse af. Tjek detaljen i "Skolen", hvis noget ser forkert ud.' },
     sc: {
       title: 'Skole direkte (Aula og ForældreIntra)',
       help: 'Henter Aula og ForældreIntra direkte fra skolen – uden telefonen og genvejen. Kalenderne dukker op under "Kalender fra iPhone" herover (fx "Aula – Victor"), hvor du vælger Alle / Vælg selv og 👤 som for de andre. Beskeder og opslag fra Aula vises på I dag under 📬.',
@@ -564,6 +565,7 @@ const STRINGS = {
     pushNotSupported: 'Notifications don’t work in this browser.',
     error: 'Something went wrong', needRole: 'Pick at least one role.', needTitle: 'Enter a title.',
     by: 'by',
+    hw: { title: 'Homework list', noDay: 'No date', hint: 'Picked out by Claude from the MinUddannelse weekly plans – tap to tick off. Check the details under "School" if something looks wrong.' },
     sc: {
       title: 'School direct (Aula and ForældreIntra)',
       help: 'Brings in Aula and ForældreIntra straight from the school – without the phone and the Shortcut. The calendars show up under "Calendar from iPhone" above (e.g. "Aula – Victor"), where you pick All / Pick and 👤 like the others. Aula messages and posts show on Today under 📬.',
@@ -854,6 +856,7 @@ const STRINGS = {
     pushNotSupported: 'Les notifications ne fonctionnent pas dans ce navigateur.',
     error: 'Une erreur est survenue', needRole: 'Choisissez au moins un rôle.', needTitle: 'Saisissez un titre.',
     by: 'par',
+    hw: { title: 'Liste des devoirs', noDay: 'Sans date', hint: 'Repéré par Claude dans les plans de la semaine de MinUddannelse – touchez pour cocher. Vérifiez le détail sous « École » si quelque chose semble faux.' },
     sc: {
       title: 'École en direct (Aula et ForældreIntra)',
       help: 'Importe Aula et ForældreIntra directement depuis l’école – sans le téléphone ni le raccourci. Les calendriers apparaissent sous « Calendrier de l’iPhone » ci-dessus (par ex. « Aula – Victor »), où vous choisissez Tous / Choisir et 👤 comme pour les autres. Les messages et publications d’Aula s’affichent sur Aujourd’hui sous 📬.',

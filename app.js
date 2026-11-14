@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '48'; // keep in step with CACHE in sw.js
+const APP_VERSION = '49'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -51,7 +51,7 @@ const S = {
   packs: [], packDone: [], todayDay: null,
   fdReady: false, fdOrder: [], fdIdeas: [], fdWeeks: [],
   watches: [], wpoints: [], pricesReady: false,
-  school: null, schoolMsgs: [], schoolFeeds: null, schoolRead: new Set(), schoolItems: [],
+  school: null, schoolMsgs: [], schoolFeeds: null, schoolRead: new Set(), schoolItems: [], homework: [],
   skemaWho: null, skemaWeek: null, skemaDay: null, skemaHidden: null,
   tab: 'today', authStep: 'email', authEmail: '', setupMode: pendingInvite() ? 'join' : 'create', ideaShift: {}, pushOn: false,
 };
@@ -173,16 +173,18 @@ async function loadAll() {
     ]);
     Object.assign(S, { packs, packDone });
     // School direct (a missing table just means an older database)
-    const [sl, sm, sr, si] = await Promise.all([
+    const [sl, sm, sr, si, hw] = await Promise.all([
       sb.from('school_links').select(SCHOOL_COLS).maybeSingle(),
       sb.from('school_messages').select('*').gte('sent_at', isoMinus(60)).order('sent_at', { ascending: false }).limit(100),
       sb.from('school_reads').select('message_id'),
       sb.from('school_items').select('*').order('due_date').order('child'),
+      sb.from('school_homework').select('*').order('due_date').order('child'),
     ]);
     S.school = sl.error ? undefined : sl.data;
     S.schoolMsgs = sm.data || [];
     S.schoolRead = new Set((sr.data || []).map((r) => r.message_id));
     S.schoolItems = si.data || [];
+    S.homework = hw.data || [];
   }
 }
 
@@ -784,6 +786,7 @@ function viewToday() {
     ${tasksBlock}
     ${bag}
     <h2>📅 ${esc(t(isToday ? 'td.program' : 'td.programTomorrow'))}</h2>${day}
+    ${parent ? homeworkList() : ''}
     ${parent ? schoolDay(d) : ''}
     ${parent ? schoolInbox() : ''}
     ${isToday ? fold('who', `👨‍👩‍👧‍👦 ${esc(t('pk.whoWhat'))}`, familyTodaySection()) : ''}
@@ -2908,6 +2911,30 @@ function schoolDay(d) {
   return fold('mu', `📚 ${esc(t('sc.atSchool', { day: label }))}`, body, items.length || '');
 }
 
+// Lektieliste: Claude's pick of lektier and "husk" from the MinUddannelse texts.
+// Open ones from today on (and today's checked ones), grouped by day; tap to check off.
+function homeworkRow(h) {
+  return `<button type="button" class="row hw ${h.done ? 'done' : ''}" data-act="hwToggle" data-id="${h.id}" aria-pressed="${h.done}">
+    <span class="check">${h.done ? '✓' : ''}</span>
+    <span class="body"><span class="ttl">${h.kind === 'husk' ? '🎒 ' : ''}${esc(h.text)}</span>
+      <span class="meta">${esc(h.child || '')}${h.subject ? ` · ${esc(h.subject)}` : ''}</span></span></button>`;
+}
+
+function homeworkList() {
+  const t0 = today();
+  const until = addDays(t0, 7);
+  const show = S.homework.filter((h) => (!h.due_date || (h.due_date >= t0 && h.due_date <= until)) && (!h.done || h.due_date === t0));
+  if (!show.length) return '';
+  const days = [...new Set(show.map((h) => h.due_date || ''))].sort((a, b) => (!a) - (!b) || a.localeCompare(b));
+  const label = (dd) => !dd ? t('hw.noDay') : dd === t0 ? t('td.today') : dd === addDays(t0, 1) ? t('td.tomorrow')
+    : `${weekdayName(dd)} ${fmtDate(dd, getLang())}`;
+  const body = days.map((dd) => `<h3 class="subhead hw-day">${esc(label(dd))}</h3>
+    <div class="list">${show.filter((h) => (h.due_date || '') === dd)
+      .sort((a, b) => (a.child || '').localeCompare(b.child || '') || a.kind.localeCompare(b.kind)).map(homeworkRow).join('')}</div>`).join('')
+    + `<p class="hint">${esc(t('hw.hint'))}</p>`;
+  return fold('hw', `📝 ${esc(t('hw.title'))}`, body, show.filter((h) => !h.done).length || '');
+}
+
 function schoolWeekDialog(week) {
   const items = S.schoolItems.filter((x) => x.kind === 'opgave' && x.week === week);
   const days = [...new Set(items.map((x) => x.due_date))].sort();
@@ -3459,6 +3486,13 @@ const ACTIONS = {
   },
   scAll: () => schoolAllDialog(),
   scWeek: (week) => schoolWeekDialog(week),
+  hwToggle: async (id) => {
+    const h = byId(S.homework, id);
+    if (!h) return;
+    h.done = !h.done; render();
+    try { await run(sb.rpc('school_homework_done', { p_id: id, p_done: h.done })); }
+    catch { h.done = !h.done; render(); }
+  },
   scNote: (id) => { const n = byId(S.schoolItems, id); if (n) schoolNoteDialog(n); },
   openPrices: () => { S.tab = 'prices'; render(); window.scrollTo(0, 0); },
   newWatch: () => watchForm(null),
