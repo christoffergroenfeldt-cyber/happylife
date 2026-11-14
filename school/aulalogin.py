@@ -8,13 +8,14 @@ In a-Shell, one line (Happy Life → Setup → Skole direkte copies it; a-Shell 
   python3 -c "import urllib.request as u;exec(u.urlopen('<raw url of this file>').read())" <sync code> <MitID username>
 The first run installs the packages it needs (in-process pip – a-Shell can't start subprocesses).
 
-Run it on ANOTHER device than the phone with the MitID app (an iPad, the other
-parent's phone, a Mac): MitID asks to scan a QR code, which this script shows in
+Run it on ANOTHER device than the phone with the MitID app (a laptop – Windows:
+`py` instead of `python3` – an iPad, the other parent's phone): MitID asks to scan a QR code, which this script shows in
 the terminal, and iOS pauses a-Shell while you are in the MitID app.
 """
 
 import asyncio
 import json
+import os
 import re
 import sys
 import time
@@ -157,9 +158,10 @@ def qr_text(qr):
     rows = []
     for y in range(0, len(m) - 1, 2):
         top, bot = m[y], m[y + 1]
-        rows.append('  ' + ''.join('█' if t and b else '▀' if t else '▄' if b else ' '
-                                     for t, b in zip(top, bot)))
-    return '\n'.join(rows)
+        rows.append(''.join('█' if t and b else '▀' if t else '▄' if b else ' '
+                            for t, b in zip(top, bot)))
+    # forced black on white, so it scans in dark terminals too (Windows, dark themes)
+    return '\n'.join(f'  \033[30;107m  {r}  \033[0m' for r in rows)
 
 
 def patch_poll():
@@ -208,6 +210,8 @@ async def login(username):
     from aula.auth_flow import _build_token_data
     patch_poll()
 
+    if os.name == 'nt':
+        os.system('')   # lets the Windows console understand colours / clear screen
     CLEAR = '\033[2J\033[H'
     async with MitIDAuthClient(mitid_username=username, timeout=60) as ac:
         task = asyncio.create_task(ac.authenticate())
