@@ -226,7 +226,10 @@ async def aula_minuddannelse(client, profile):
                 info['fetched'][f'ugenoter {week}'] = type(e).__name__
         if '0030' in ids:
             try:
-                for tk in await client.widgets.get_mu_tasks('0030', kids, insts, mu_week, session_uuid):
+                tasks = await client.widgets.get_mu_tasks('0030', kids, insts, mu_week, session_uuid)
+                if tasks and tasks[0]._raw:   # field names only (no content), to see what MinUddannelse sends
+                    info['opgave_fields'] = {k: type(v).__name__ for k, v in tasks[0]._raw.items()}
+                for tk in tasks:
                     subject = (tk.course.name if tk.course else '') or \
                               (tk.classes[0].subject_name if tk.classes else '') or ''
                     items.append({'kind': 'opgave', 'week': week, 'child': first_name(tk.student_name),
