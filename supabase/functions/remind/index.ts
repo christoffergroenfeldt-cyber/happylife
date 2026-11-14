@@ -222,11 +222,14 @@ export function priceDigest(watches: Watch[], points: Point[], members: (Member 
 
 const PTEXT: Record<string, Record<string, (x?: string) => string>> = {
   da: { many: () => 'Dagens bedste priser', at: (s) => `billigst hos ${s}`, since: (x) => `${x} siden sidst`,
-        lowest: () => 'laveste pris hidtil', target: () => 'under din målpris 🎯', same: () => 'uændret' },
+        lowest: () => 'laveste pris hidtil', target: () => 'under din målpris 🎯', same: () => 'uændret',
+        none: () => 'Ingen tilbud fundet', checked: () => 'Priserne er tjekket' },
   en: { many: () => 'Today’s best prices', at: (s) => `cheapest at ${s}`, since: (x) => `${x} since last time`,
-        lowest: () => 'lowest price so far', target: () => 'below your target 🎯', same: () => 'unchanged' },
+        lowest: () => 'lowest price so far', target: () => 'below your target 🎯', same: () => 'unchanged',
+        none: () => 'No offers found', checked: () => 'Prices checked' },
   fr: { many: () => 'Meilleurs prix du jour', at: (s) => `le moins cher chez ${s}`, since: (x) => `${x} depuis la dernière fois`,
-        lowest: () => 'prix le plus bas à ce jour', target: () => 'sous votre prix cible 🎯', same: () => 'inchangé' },
+        lowest: () => 'prix le plus bas à ce jour', target: () => 'sous votre prix cible 🎯', same: () => 'inchangé',
+        none: () => 'Aucune offre trouvée', checked: () => 'Prix vérifiés' },
 };
 const LOC: Record<string, string> = { da: 'da-DK', en: 'en-GB', fr: 'fr-FR' };
 export const kr = (lang: string, v: number) => new Intl.NumberFormat(LOC[lang] || 'da-DK',
@@ -246,6 +249,20 @@ export function priceMessage(lang: string, items: { w: Watch; st: ReturnType<typ
            body: items.map(({ w, st }) => `${w.title}: ${kr(lang, st.best!)}${w.best_shop ? ` (${w.best_shop})` : ''}`
              + (st.change ? ` ${st.change < 0 ? '↓' : '↑'}${kr(lang, Math.abs(st.change))}` : '')
              + (st.atTarget ? ' 🎯' : '')).join('\n') };
+}
+// After "check now": what was found (products without a price today say so)
+export function checkedMessage(lang: string, items: { w: Watch & { check_note?: string | null }; st: ReturnType<typeof priceStatus> }[]) {
+  const tx = PTEXT[lang] || PTEXT.da;
+  const found = items.filter((x) => x.st.best != null);
+  if (items.length === 1 && !found.length) {
+    return { title: `🏷️ ${items[0].w.title}`, body: items[0].w.check_note || tx.none() };
+  }
+  if (found.length === items.length) return priceMessage(lang, found);
+  const m = found.length ? priceMessage(lang, found) : { title: '', body: '' };
+  return { title: `🏷️ ${tx.checked()}`,
+           body: [found.length > 1 ? m.body : found.length ? `${m.title.replace('🏷️ ', '')}` : '',
+                  ...items.filter((x) => x.st.best == null).map((x) => `${x.w.title}: ${x.w.check_note || tx.none()}`)]
+             .filter(Boolean).join('\n') };
 }
 // ------------------------------------------------------------ logic end
 
@@ -354,6 +371,25 @@ Deno.serve(async (req) => {
             url: `${appUrl}?prices=${items.length === 1 ? items[0].w.id : 'all'}`, tag: `prices:${today}`,
           }));
         }
+      }
+    }
+    // "Check now" results: tell whoever asked, one message per person
+    const { data: told } = await admin.from('price_watches').select('*').not('tell_user', 'is', null);
+    if (told?.length) {
+      const byUser: Record<string, { w: Watch; st: ReturnType<typeof priceStatus> }[]> = {};
+      for (const w of told as (Watch & { tell_user: string })[]) {
+        const { data: claimed } = await admin.from('price_watches').update({ tell_user: null })
+          .eq('id', w.id).eq('tell_user', w.tell_user).select('id');
+        if (!claimed?.length) continue;   // another run took it
+        const { data: pts } = await admin.from('price_points').select('watch_id,checked_on,price,shipping,used,in_stock')
+          .eq('watch_id', w.id).gte('checked_on', addDays(today, -400));
+        (byUser[w.tell_user] ||= []).push({ w, st: priceStatus(w, (pts ?? []) as Point[], today) });
+      }
+      for (const [user, items] of Object.entries(byUser)) {
+        priceSent += await sendTo([user], (lang) => ({
+          ...checkedMessage(lang, items),
+          url: `${appUrl}?prices=${items.length === 1 ? items[0].w.id : 'all'}`, tag: `checked:${Date.now()}`,
+        }));
       }
     }
     return json({ today, now, sent, priceSent });

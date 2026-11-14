@@ -1,0 +1,49 @@
+# Happy Life – price watch ("Prisjagt"). Every 5 minutes a quick check asks the
+# database whether anything is due: a product someone tapped "Tjek nu" on, or
+# the daily check of every product (from 05:30). Only then Claude Code searches
+# for prices (with the family's Claude subscription) and the results are saved
+# through price_save(), which checks every offer again.
+# Secrets: CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) and HL_SCHOOL_KEY.
+# The repo is public: the log shows counts only – Claude's output is not printed.
+name: Price check
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: price-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - id: jobs
+        run: node scripts/price-check.mjs jobs >> "$GITHUB_OUTPUT"
+        env:
+          HL_SCHOOL_KEY: ${{ secrets.HL_SCHOOL_KEY }}
+          HAS_CLAUDE: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' && '1' || '' }}
+      - if: steps.jobs.outputs.work == 'yes'
+        run: npm install -g @anthropic-ai/claude-code >/dev/null 2>&1
+      - if: steps.jobs.outputs.work == 'yes'
+        working-directory: work
+        timeout-minutes: 30
+        continue-on-error: true
+        run: |
+          claude -p "$(cat ../scripts/price-check-prompt.md)" \
+            --model sonnet --max-turns 200 \
+            --allowedTools "WebSearch,WebFetch,Read,Write" > /dev/null 2> claude.err \
+            && echo "price search finished" || { echo "price search stopped (exit $?)"; grep -ciE "auth|token|login" claude.err | sed 's/^/auth-related lines: /'; }
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      - if: steps.jobs.outputs.work == 'yes'
+        run: node scripts/price-check.mjs save
+        env:
+          HL_SCHOOL_KEY: ${{ secrets.HL_SCHOOL_KEY }}

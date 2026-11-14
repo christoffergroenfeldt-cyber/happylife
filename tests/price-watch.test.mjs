@@ -20,8 +20,9 @@ await db.exec(`grant select, insert, update, delete on all tables in schema publ
   -- the price tables keep the column grants from schema.sql
   revoke all on price_watches, price_points, price_notified from authenticated;
   grant select on price_watches, price_points to authenticated;
-  grant insert (title, details, ref_url, target_price, allow_used, notify, visible_to) on price_watches to authenticated;
-  grant update (title, details, ref_url, target_price, allow_used, notify, visible_to, active) on price_watches to authenticated;
+  grant insert (title, details, ref_url, target_price, allow_used, notify, visible_to, notes) on price_watches to authenticated;
+  grant update (title, details, ref_url, target_price, allow_used, notify, visible_to, active, notes) on price_watches to authenticated;
+  insert into server_keys values ('school', encode(sha256('k'::bytea), 'hex'));
   grant delete on price_watches to authenticated;`);
 
 const DAD = '00000000-0000-0000-0000-00000000000d', MOM = '00000000-0000-0000-0000-00000000000a', KID = '00000000-0000-0000-0000-00000000000c';
@@ -102,4 +103,35 @@ test('no offers today keeps the last best price with a note', async () => {
   await q(`select price_refresh($1)`, [w.id]);
   const r = (await q('select * from price_watches where id = $1', [w.id]))[0];
   assert.equal(r.best_price, null); assert.equal(r.check_note, 'Ingen tilbud fundet i dag');
+});
+
+test('notes, check now and the GitHub Action round trip', async () => {
+  const w = await one(KID, `insert into price_watches(title, notes) values ('Robotplæneklipper', 'Kun med gode anmeldelser') returning *`);
+  assert.equal(w.notes, 'Kun med gode anmeldelser');
+  // added today and not queued: not due yet
+  let jobs = (await q(`select price_jobs('k') j`))[0].j;
+  assert.ok(!jobs.watches.some((x) => x.id === w.id));
+  await fails(q(`select price_jobs('wrong')`));
+  // the child asks for a check now
+  assert.equal((await one(KID, 'select price_check_now($1) n', [w.id])).n, 1);
+  await fails(as(KID, `select price_check_now($1)`, ['00000000-0000-0000-0000-000000000999']));
+  jobs = (await q(`select price_jobs('k') j`))[0].j;
+  const job = jobs.watches.find((x) => x.id === w.id);
+  assert.ok(jobs.due && job.queued && job.notes === 'Kun med gode anmeldelser');
+  assert.equal(jobs.watches[0].id, w.id);   // queued first
+  // the Action saves: bad offers are skipped
+  const offers = [
+    { shop: 'Bauhaus', price: 4999, shipping: 0, url: 'https://bauhaus.dk/x', in_stock: true, note: '4,6/5 (210 anm.)' },
+    { shop: 'Evil', price: 1, url: 'javascript:alert(1)' },
+    { shop: '', price: 100, url: 'https://x.dk' },
+    { shop: 'Big', price: '99999999', url: 'https://x.dk' },
+  ];
+  const n = (await q(`select price_save('k', $1, $2::jsonb, $3::jsonb, 'Godt tilbud', null) n`,
+    [w.id, JSON.stringify(offers), JSON.stringify(['https://pricerunner.dk/x', 'ftp://nope'])]))[0].n;
+  assert.equal(n, 1);
+  const r = (await q('select * from price_watches where id = $1', [w.id]))[0];
+  assert.equal(Number(r.best_price), 4999); assert.deepEqual(r.source_urls, ['https://pricerunner.dk/x']);
+  assert.equal(r.check_requested_at, null); assert.equal(r.tell_user, KID);
+  assert.ok(!(await q(`select price_jobs('k') j`))[0].j.watches.some((x) => x.id === w.id));
+  await fails(q(`select price_save('wrong', $1, '[]'::jsonb)`, [w.id]));
 });

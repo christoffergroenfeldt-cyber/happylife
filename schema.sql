@@ -2047,3 +2047,123 @@ grant execute on function school_link_save(text, jsonb), school_link_login(), sc
 -- the job uses the public anon key + the server key
 grant execute on function school_jobs(text), school_job_update(text, uuid, jsonb),
   school_messages_put(text, uuid, jsonb) to anon;
+
+-- ================================================================ price watch: notes and "check now"
+-- notes: what the family cares about, read by the price check (e.g. "only the
+-- lowest price", "only products with good reviews from other buyers").
+-- "Check now": the app asks with price_check_now(); an hourly scheduled task
+-- (07–22) checks queued products. When price_refresh() runs it clears the
+-- request and remembers who asked, so the `remind` function can tell them.
+
+alter table price_watches add column if not exists notes text check (length(notes) <= 1000);
+alter table price_watches add column if not exists check_requested_at timestamptz;
+alter table price_watches add column if not exists check_requested_by uuid references auth.users on delete set null;
+alter table price_watches add column if not exists tell_user uuid references auth.users on delete set null;
+
+grant insert (title, details, ref_url, target_price, allow_used, notify, visible_to, notes) on price_watches to authenticated;
+grant update (title, details, ref_url, target_price, allow_used, notify, visible_to, active, notes) on price_watches to authenticated;
+
+-- Queue a check of one product (or, with null, every active product I can see)
+create or replace function price_check_now(p_id uuid default null)
+returns int language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  update price_watches set check_requested_at = coalesce(check_requested_at, now()), check_requested_by = auth.uid()
+   where family_id = my_family() and price_visible(visible_to, created_by) and active
+     and (p_id is null or id = p_id);
+  get diagnostics n = row_count;
+  if p_id is not null and n = 0 then raise exception 'not found'; end if;
+  return n;
+end $$;
+
+create or replace function price_refresh(p_id uuid, p_advice text default null, p_note text default null)
+returns void language plpgsql security definer set search_path = public as $$
+declare w price_watches; b price_points; d date := (now() at time zone 'Europe/Copenhagen')::date;
+begin
+  select * into w from price_watches where id = p_id;
+  if not found then raise exception 'not found'; end if;
+  select * into b from price_points
+   where watch_id = p_id and checked_on = d and in_stock is distinct from false and (w.allow_used or not used)
+   order by price + coalesce(shipping, 0), used, shop limit 1;
+  update price_watches set
+    best_price = case when b.id is null then best_price else b.price + coalesce(b.shipping, 0) end,
+    best_shop  = case when b.id is null then best_shop else b.shop end,
+    best_url   = case when b.id is null then best_url else b.url end,
+    best_used  = case when b.id is null then best_used else b.used end,
+    advice     = coalesce(p_advice, advice),
+    check_note = case when b.id is null then coalesce(p_note, 'Ingen tilbud fundet i dag') else p_note end,
+    last_checked = now(),
+    tell_user = case when check_requested_at is not null then check_requested_by else tell_user end,
+    check_requested_at = null, check_requested_by = null
+   where id = p_id;
+end $$;
+
+revoke execute on function price_check_now(uuid) from anon, public;
+grant execute on function price_check_now(uuid) to authenticated;
+revoke execute on function price_refresh(uuid, text, text) from anon, authenticated, public;
+
+-- The price-check GitHub Action (.github/workflows/price-check.yml) asks every
+-- 5 minutes what to check and saves what it found, with the server key
+-- (HL_SCHOOL_KEY, see server_keys). Due: products queued with "check now",
+-- and once a day from 05:30 every active product not checked yet today
+-- (a product added today waits for its "check now" or tomorrow). At most 10 per run.
+create or replace function price_jobs(p_key text) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare d date := (now() at time zone 'Europe/Copenhagen')::date;
+        tm time := (now() at time zone 'Europe/Copenhagen')::time;
+        ws jsonb;
+begin
+  if not server_key_ok(p_key) then raise exception 'bad key'; end if;
+  select coalesce(jsonb_agg(to_jsonb(x) - 'sort1' - 'sort2' order by x.sort1 desc, x.sort2), '[]') into ws from (
+    select w.id, w.title, w.details, w.notes, w.ref_url, w.target_price, w.allow_used, w.source_urls,
+           w.best_price, w.best_shop, w.check_requested_at is not null as queued,
+           (select coalesce(jsonb_agg(jsonb_build_object('day', p.checked_on, 'shop', p.shop,
+                     'total', p.price + coalesce(p.shipping, 0), 'used', p.used) order by p.checked_on), '[]')
+              from price_points p where p.watch_id = w.id and p.checked_on >= d - 60) as history,
+           w.check_requested_at is not null as sort1, w.last_checked as sort2
+      from price_watches w
+     where w.active and (w.check_requested_at is not null
+        or (tm >= '05:30' and coalesce((w.last_checked at time zone 'Europe/Copenhagen')::date,
+                                       (w.created_at at time zone 'Europe/Copenhagen')::date) < d))
+     order by w.check_requested_at is not null desc, w.last_checked nulls first
+     limit 10
+  ) x;
+  return jsonb_build_object('due', jsonb_array_length(ws) > 0, 'watches', ws);
+end $$;
+
+-- Save one product's offers (checked here, not trusted from the web), then refresh it
+create or replace function price_save(p_key text, p_id uuid, p_offers jsonb, p_sources jsonb default '[]',
+                                      p_advice text default null, p_note text default null)
+returns int language plpgsql security definer set search_path = public as $$
+declare o jsonb; n int := 0; srcs text[];
+begin
+  if not server_key_ok(p_key) then raise exception 'bad key'; end if;
+  if not exists (select 1 from price_watches where id = p_id) then raise exception 'not found'; end if;
+  for o in select * from jsonb_array_elements(case when jsonb_typeof(p_offers) = 'array' then p_offers else '[]' end) limit 8 loop
+    continue when jsonb_typeof(o) <> 'object'
+      or length(btrim(coalesce(o->>'shop', ''))) not between 1 and 80
+      or coalesce(o->>'price', '') !~ '^\d{1,7}(\.\d{1,2})?$' or (o->>'price')::numeric <= 0
+      or (o->>'shipping' is not null and o->>'shipping' !~ '^\d{1,6}(\.\d{1,2})?$')
+      or coalesce(o->>'url', '') !~ '^https://[^\s<>"]{4,}$' or length(o->>'url') > 1000;
+    insert into price_points (watch_id, shop, price, shipping, url, used, in_stock, note)
+    values (p_id, btrim(o->>'shop'), (o->>'price')::numeric, (o->>'shipping')::numeric, o->>'url',
+            coalesce(o->>'used', 'false') = 'true',
+            case o->>'in_stock' when 'true' then true when 'false' then false end,
+            nullif(left(btrim(coalesce(o->>'note', '')), 200), ''))
+    on conflict (watch_id, checked_on, shop, used) do update
+      set price = excluded.price, shipping = excluded.shipping, url = excluded.url,
+          in_stock = excluded.in_stock, note = excluded.note;
+    n := n + 1;
+  end loop;
+  select coalesce(array_agg(u), '{}') into srcs from (
+    select x as u from jsonb_array_elements_text(case when jsonb_typeof(p_sources) = 'array' then p_sources else '[]' end) x
+     where x ~ '^https://[^\s<>"]{4,}$' and length(x) <= 1000 limit 4) s;
+  if cardinality(srcs) > 0 then update price_watches set source_urls = srcs where id = p_id; end if;
+  perform price_refresh(p_id, nullif(left(btrim(coalesce(p_advice, '')), 200), ''),
+                        nullif(left(btrim(coalesce(p_note, '')), 200), ''));
+  return n;
+end $$;
+
+revoke execute on function price_jobs(text), price_save(text, uuid, jsonb, jsonb, text, text) from public, authenticated;
+grant execute on function price_jobs(text), price_save(text, uuid, jsonb, jsonb, text, text) to anon;

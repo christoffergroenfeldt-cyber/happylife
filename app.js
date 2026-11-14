@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '43'; // keep in step with CACHE in sw.js
+const APP_VERSION = '44'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -2859,6 +2859,7 @@ const kr = (v, dec) => (v == null ? '–' : new Intl.NumberFormat(LOCALE(), { st
 const watchPoints = (id) => S.wpoints.filter((p) => p.watch_id === id);
 const canEditWatch = (w) => w.created_by === uid() || isParent();
 const following = (w) => (w.followers || []).includes(uid());
+const checkPending = (w) => !!w.check_requested_at;
 
 // Best total price per day (in stock unless unknown; used only when allowed) – same rule as the server
 function dailyBest(w) {
@@ -2916,19 +2917,24 @@ function watchCard(w) {
       ${st.isLow ? `<strong>${esc(t('pr.lowest'))}</strong> · ` : st.low != null && st.best != null && st.low < st.best ? `${esc(t('pr.lowWas', { price: kr(st.low), date: fmtDate(st.lowDay, getLang()) }))} · ` : ''}
       ${st.atTarget ? `<strong>🎯 ${esc(t('pr.atTarget'))}</strong> · ` : w.target_price ? `🎯 ${esc(kr(w.target_price))} · ` : ''}
       ${checked ? esc(t('pr.checked', { date: checked })) : esc(t('pr.notYet'))}</div>
+    ${w.notes ? `<div class="meta">💬 ${esc(w.notes)}</div>` : ''}
+    ${checkPending(w) ? `<div class="meta pending">⏳ ${esc(t('pr.pending'))}</div>` : ''}
     ${w.check_note ? `<div class="meta">ℹ️ ${esc(w.check_note)}</div>` : ''}
     ${w.advice ? `<div class="idea">💡 ${esc(w.advice)}</div>` : ''}
     <div class="acts">
       ${offerLink(w.best_url, t('pr.toOffer'))}
       <button class="small" data-act="followWatch" data-id="${w.id}">${following(w) ? '🔔' : '🔕'} ${esc(t(following(w) ? 'pr.following' : 'pr.follow'))}</button>
       <button class="small" data-act="openWatch" data-id="${w.id}">📈 ${esc(t('pr.history'))}</button>
+      ${w.active && !checkPending(w) ? `<button class="small" data-act="checkWatch" data-id="${w.id}">🔄 ${esc(t('pr.checkNow'))}</button>` : ''}
     </div>
   </div>`;
 }
 
 function viewPrices() {
   const back = `<div class="toolbar"><button data-act="tab" data-id="today">‹ ${esc(t('tabs.today'))}</button>
-    <button class="primary" data-act="newWatch">＋ ${esc(t('pr.add'))}</button></div>`;
+    <button class="primary" data-act="newWatch">＋ ${esc(t('pr.add'))}</button>
+    ${S.watches.some((w) => w.active && !checkPending(w)) ? `<button data-act="checkWatch" data-id="all">🔄 ${esc(t('pr.checkAll'))}</button>` : ''}</div>`;
+  pollPending();
   const list = [...S.watches].sort((a, b) => (b.active - a.active) || (following(b) - following(a)) || a.title.localeCompare(b.title));
   return `${back}
     <p class="hint">${esc(t('pr.intro'))}</p>
@@ -2951,6 +2957,29 @@ function pricesTeaser() {
     <button class="small" data-act="tab" data-id="prices">${esc(t('pr.all'))} →</button>`, mine.length);
 }
 
+// "Check now": queued in the database; the price-check GitHub Action picks it up within minutes
+async function requestCheck(id) {
+  const n = await run(sb.rpc('price_check_now', { p_id: id === 'all' ? null : id }));
+  toast(t('pr.queued', n || 0));
+  await refresh();
+}
+
+// While a check is waiting, look again every 30 s (for up to 20 min) on the price page
+let pollTimer = null, pollUntil = 0;
+function pollPending() {
+  if (!S.watches.some(checkPending)) { pollUntil = 0; return; }
+  if (!pollUntil) pollUntil = Date.now() + 20 * 60 * 1000;
+  if (pollTimer || Date.now() > pollUntil) return;
+  pollTimer = setTimeout(async () => {
+    pollTimer = null;
+    if (S.tab !== 'prices' || document.visibilityState !== 'visible' || dialog.open) return pollPending();
+    const before = S.watches.filter(checkPending).length;
+    try { await loadAll(); } catch { /* shown */ }
+    if (S.watches.filter(checkPending).length < before) toast(t('pr.checkedNow'));
+    render();
+  }, 30000);
+}
+
 function watchDetail(w) {
   const st = watchStatus(w);
   const pts = watchPoints(w.id);
@@ -2962,6 +2991,7 @@ function watchDetail(w) {
   openDialog(`<div class="form">
     <h2>🏷️ ${esc(w.title)}</h2>
     ${w.details ? `<p class="meta">${esc(w.details)}</p>` : ''}
+    ${w.notes ? `<p class="meta">💬 ${esc(w.notes)}</p>` : ''}
     ${w.ref_url ? `<p>${offerLink(w.ref_url, t('pr.product'))}</p>` : ''}
     ${st.days.length > 1 ? `<div class="w-spark big">${sparkline(st.days)}</div>
       <p class="meta">${esc(t('pr.range', { lo: kr(st.low), hi: kr(Math.max(...st.days.map(([, v]) => v))), n: st.days.length }))}</p>` : ''}
@@ -2991,6 +3021,7 @@ function watchForm(w) {
       <h2>🏷️ ${w ? esc(w.title) : esc(t('pr.add'))}</h2>
       <label>${t('pr.what')}<input name="title" value="${esc(x.title)}" maxlength="120" required placeholder="${esc(t('pr.whatPh'))}"></label>
       <label>${t('pr.details')}<input name="details" value="${esc(x.details || '')}" maxlength="500" placeholder="${esc(t('pr.detailsPh'))}"></label>
+      <label>${t('pr.notes')}<textarea name="notes" maxlength="1000" rows="3" placeholder="${esc(t('pr.notesPh'))}">${esc(x.notes || '')}</textarea></label>
       <label>${t('pr.link')}<input name="ref_url" type="url" value="${esc(x.ref_url || '')}" maxlength="500" placeholder="https://…"></label>
       <label>${t('pr.target')}<input name="target_price" type="number" min="1" step="1" inputmode="numeric" value="${x.target_price != null ? Number(x.target_price) : ''}" placeholder="${esc(t('pr.targetPh'))}"></label>
       <label class="check"><input type="checkbox" name="allow_used" ${x.allow_used ? 'checked' : ''}><span>${t('pr.allowUsed')}</span></label>
@@ -3012,14 +3043,18 @@ function watchForm(w) {
     const url = f.get('ref_url').trim();
     const row = { title: f.get('title').trim(), details: f.get('details').trim() || null, ref_url: url || null,
       target_price: Number(f.get('target_price')) > 0 ? Number(f.get('target_price')) : null,
-      allow_used: f.get('allow_used') === 'on', notify: f.get('notify'), visible_to: f.get('visible') };
+      allow_used: f.get('allow_used') === 'on', notify: f.get('notify'), visible_to: f.get('visible'),
+      notes: f.get('notes').trim() || null };
     if (!row.title) return toast(t('needTitle'), true);
     if (url && !/^https?:\/\//i.test(url)) return toast(t('pr.badLink'), true);
+    let id = w?.id;
     if (w) await run(sb.from('price_watches').update({ ...row, active: f.get('active') === 'on' }).eq('id', w.id));
-    else await run(sb.from('price_watches').insert(row));
+    else id = (await run(sb.from('price_watches').insert(row).select('id').single())).id;
     closeDialog();
-    if (!w) toast(t('pr.added'));
-    await refresh();
+    // A new product (or a changed description): check it now?
+    const changed = w && ['title', 'details', 'notes', 'ref_url', 'allow_used'].some((k) => (w[k] ?? null) !== (row[k] ?? null));
+    if ((!w || changed) && confirm(t(w ? 'pr.checkChangedQ' : 'pr.checkNowQ', { title: row.title }))) await requestCheck(id);
+    else { if (!w) toast(t('pr.added')); await refresh(); }
   };
 }
 
@@ -3310,6 +3345,7 @@ const ACTIONS = {
   openPrices: () => { S.tab = 'prices'; render(); window.scrollTo(0, 0); },
   newWatch: () => watchForm(null),
   openWatch: (id) => { const w = byId(S.watches, id); if (w) watchDetail(w); },
+  checkWatch: (id) => requestCheck(id),
   editWatch: (id) => { const w = byId(S.watches, id); if (w) watchForm(w); },
   followWatch: async (id) => {
     const w = byId(S.watches, id);

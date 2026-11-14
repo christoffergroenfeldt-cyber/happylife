@@ -11,7 +11,7 @@ const logic = src.slice(src.indexOf('// ----------------------------------------
   src.indexOf('// ------------------------------------------------------------ logic end'));
 const file = join(mkdtempSync(join(tmpdir(), 'remind-')), 'logic.ts');
 writeFileSync(file, logic);
-const { localNow, dueOccurrence, whoToRemind, reminderBody, priceStatus, priceDigest, priceMessage } = await import(file);
+const { localNow, dueOccurrence, whoToRemind, reminderBody, priceStatus, priceDigest, priceMessage, checkedMessage } = await import(file);
 
 const base = {
   id: 't1', family_id: 'f', title: 'Tøm opvaskeren', roles: [], assignees: [], open: false, need: 1,
@@ -182,4 +182,15 @@ test('price message: one product or a list', () => {
   const many = priceMessage('en', [{ w: W, st }, { w: { ...W, title: 'Airfryer', best_shop: 'Power' }, st }]);
   assert.equal(many.title, '🏷️ Today’s best prices');
   assert.equal(many.body.split('\n').length, 2);
+});
+
+test('check-now message: found, not found, mixed', () => {
+  const st = priceStatus(W, pts, '2026-11-14');
+  const none = priceStatus(W, [], '2026-11-14');
+  assert.match(checkedMessage('da', [{ w: W, st }]).title, /LEGO 42172/);
+  assert.deepEqual(checkedMessage('da', [{ w: { ...W, check_note: 'Udsolgt alle steder' }, st: none }]),
+    { title: '🏷️ LEGO 42172', body: 'Udsolgt alle steder' });
+  const mixed = checkedMessage('en', [{ w: W, st }, { w: { ...W, title: 'Airfryer' }, st: none }]);
+  assert.equal(mixed.title, '🏷️ Prices checked');
+  assert.match(mixed.body, /LEGO 42172: DKK\s?1,199\nAirfryer: No offers found/);
 });

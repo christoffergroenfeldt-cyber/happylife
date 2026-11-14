@@ -649,3 +649,4 @@ a.offer { display: inline-flex; align-items: center; padding: 8px 14px; border-r
 .mitid-qr img { width: 230px; height: 230px; background: #fff; padding: 10px; border-radius: 12px; image-rendering: pixelated; }
 .school-msg.unread .ttl { font-weight: 800; }
 .school-read .msg-body { white-space: normal; line-height: 1.45; max-height: 60vh; overflow: auto; margin: 10px 0; }
+.watch .pending { color: var(--accent); font-weight: 600; }
