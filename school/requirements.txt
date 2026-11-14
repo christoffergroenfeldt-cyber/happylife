@@ -1,0 +1,4 @@
+aula==0.8.2
+icalendar>=6.0
+recurring-ical-events>=3.3
+httpx>=0.28

@@ -1,0 +1,42 @@
+# Happy Life – school sync: Aula (MitID) + iCal feeds such as ForældreIntra.
+# Every 5 minutes a quick check asks the database whether anything is due
+# (a MitID login started in the app, "sync now", or the last sync > 2 hours
+# old). Only then is Python set up and the sync run. See school/school_sync.py.
+# Needs the repository secret HL_SCHOOL_KEY.
+# The repo is public, so the log shows counts only – never names or codes.
+name: School sync
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: school-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: python3 school/school_sync.py check >> "$GITHUB_OUTPUT"
+        env:
+          HL_SCHOOL_KEY: ${{ secrets.HL_SCHOOL_KEY }}
+      - if: steps.check.outputs.work == 'yes'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: school/requirements.txt
+      - if: steps.check.outputs.work == 'yes'
+        run: pip install -q -r school/requirements.txt
+      - if: steps.check.outputs.work == 'yes'
+        run: python school/school_sync.py run
+        env:
+          HL_SCHOOL_KEY: ${{ secrets.HL_SCHOOL_KEY }}

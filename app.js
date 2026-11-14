@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '42'; // keep in step with CACHE in sw.js
+const APP_VERSION = '43'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -51,6 +51,7 @@ const S = {
   packs: [], packDone: [], todayDay: null,
   fdReady: false, fdOrder: [], fdIdeas: [], fdWeeks: [],
   watches: [], wpoints: [], pricesReady: false,
+  school: null, schoolMsgs: [], schoolFeeds: null,
   skemaWho: null, skemaWeek: null, skemaDay: null, skemaHidden: null,
   tab: 'today', authStep: 'email', authEmail: '', setupMode: pendingInvite() ? 'join' : 'create', ideaShift: {}, pushOn: false,
 };
@@ -171,6 +172,13 @@ async function loadAll() {
       sb.from('pack_done').select('*').gte('on_date', isoMinus(7)).then((r) => r.data || []),
     ]);
     Object.assign(S, { packs, packDone });
+    // School direct (a missing table just means an older database)
+    const [sl, sm] = await Promise.all([
+      sb.from('school_links').select(SCHOOL_COLS).maybeSingle(),
+      sb.from('school_messages').select('*').gte('sent_at', isoMinus(60)).order('sent_at', { ascending: false }).limit(100),
+    ]);
+    S.school = sl.error ? undefined : sl.data;
+    S.schoolMsgs = sm.data || [];
   }
 }
 
@@ -352,6 +360,7 @@ function render() {
         <span class="ico">${icons[k]}</span><span>${esc(t('tabs.' + k))}</span></button>`).join('')}
     </nav>`;
   keepChipsInView();
+  schoolPoll();
 }
 
 // A sideways-scrolling row of chips is redrawn on every tap; bring the chosen
@@ -771,6 +780,7 @@ function viewToday() {
     ${tasksBlock}
     ${bag}
     <h2>📅 ${esc(t(isToday ? 'td.program' : 'td.programTomorrow'))}</h2>${day}
+    ${parent ? schoolInbox() : ''}
     ${isToday ? fold('who', `👨‍👩‍👧‍👦 ${esc(t('pk.whoWhat'))}`, familyTodaySection()) : ''}
     ${fold('snart', `🗓️ ${esc(t('upcoming'))}`, snart, all.length)}
     ${fold('moments', `💛 ${esc(t('timeFor'))}`, moments, due.length || '')}
@@ -2631,6 +2641,7 @@ function viewFamily() {
     ${pushSection()}
     ${homeSection()}
     ${calendarSection()}
+    ${schoolSection()}
     ${peopleSetupSection()}
     ${skemaSetupSection()}
     <h2>${esc(t('language'))}</h2>
@@ -2721,6 +2732,123 @@ function memberForm(m) {
   };
 }
 
+
+// ------------------------------------------------------------ school direct (Aula + iCal)
+// school/school_sync.py (a GitHub Action) does the work; the app saves the
+// MitID username and feed links, starts a MitID login and shows its QR code /
+// code, and shows the messages and posts.
+
+const SCHOOL_COLS = 'user_id, mitid_username, feeds, status, login_qr1, login_qr2, login_otp, login_note, login_updated, sync_requested, last_sync_at, last_result';
+const SCHOOL_WORKFLOW = 'https://github.com/christoffergroenfeldt-cyber/happylife/actions/workflows/school-sync.yml';
+const schoolBusy = (l) => ['login_requested', 'login_running'].includes(l?.status);
+const fmtWhen = (iso) => new Date(iso).toLocaleString(
+  { da: 'da-DK', en: 'en-GB', fr: 'fr-FR' }[getLang()], { dateStyle: 'medium', timeStyle: 'short' });
+const svgSrc = (svg) => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+
+function feedRow(f = {}) {
+  return `<div class="feed-row">
+    <input name="fname" placeholder="${esc(t('sc.feedName'))}" value="${esc(f.name || '')}" maxlength="60">
+    <input name="furl" type="url" inputmode="url" placeholder="${esc(t('sc.feedUrl'))}" value="${esc(f.url || '')}">
+    <button type="button" class="icon" data-act="scDelFeed" aria-label="${esc(t('remove'))}">✕</button></div>`;
+}
+
+function schoolLoginBox() {
+  const l = S.school;
+  if (!l) return '';
+  const st = `<p class="meta"><span class="chip ${l.status === 'ok' ? 'yes' : ''}">${esc(t('sc.st_' + l.status))}</span>
+    ${l.login_note && l.status !== 'ok' ? ` ${esc(l.login_note)}` : ''}</p>`;
+  if (l.status === 'login_requested') {
+    return `${st}<p class="hint">${esc(t('sc.waitHelp'))}</p>
+      <a class="btnlink" href="${SCHOOL_WORKFLOW}" target="_blank" rel="noopener">▶︎ ${esc(t('sc.startNow'))}</a>`;
+  }
+  if (l.status === 'login_running') {
+    return `${st}
+      ${l.login_otp ? `<p class="meta">${esc(t('sc.otp'))}</p><div class="code login-code">${esc(l.login_otp)}</div><p class="hint">${esc(t('sc.approve'))}</p>` : ''}
+      ${l.login_qr1 ? `<p class="meta">${esc(t('sc.scan'))}</p><div class="mitid-qr"><img id="mitidQr" alt="MitID QR" src="${svgSrc(l.login_qr1)}"></div>` : ''}`;
+  }
+  return `${st}${l.mitid_username ? `<button type="button" class="${l.status === 'ok' ? 'small' : 'primary'}" data-act="scLogin">🔐 ${esc(t(l.status === 'off' ? 'sc.login' : 'sc.loginAgain'))}</button>` : ''}`;
+}
+
+function schoolSection() {
+  if (!isParent() || S.school === undefined) return '';
+  const l = S.school;
+  const feeds = S.schoolFeeds || l?.feeds || [];
+  return `
+    <h2>🏫 ${esc(t('sc.title'))}</h2>
+    <div class="card school">
+      <p class="meta">${esc(t('sc.help'))}</p>
+      <div id="schoolBox">${schoolLoginBox()}</div>
+      <form id="schoolForm" class="form">
+        <label>${esc(t('sc.user'))}<input name="user" autocomplete="username" autocapitalize="off" spellcheck="false" value="${esc(l?.mitid_username || '')}"></label>
+        <fieldset><legend>${esc(t('sc.feeds'))}</legend>
+          <div id="feedRows">${feeds.map(feedRow).join('')}</div>
+          <button type="button" class="small" data-act="scAddFeed">${esc(t('sc.addFeed'))}</button>
+          <p class="hint">${esc(t('sc.feedsHelp'))}</p></fieldset>
+        <div class="btns"><button class="primary" type="submit">${esc(t('sc.save'))}</button></div>
+      </form>
+      ${l ? `<p class="meta">${l.last_sync_at ? esc(t('sc.last', { when: fmtWhen(l.last_sync_at) })) : esc(t('sc.never'))}
+          ${l.last_result ? `<br>${esc(l.last_result)}` : ''}</p>
+        <div class="acts"><button type="button" class="small" data-act="scSync" ${l.sync_requested ? 'disabled' : ''}>↻ ${esc(t(l.sync_requested ? 'sc.queued' : 'sc.syncNow'))}</button>
+          <button type="button" class="link" data-act="scRemove">${esc(t('sc.remove'))}</button></div>` : ''}
+    </div>`;
+}
+
+// While a MitID login runs: fetch the row every 2 s and swap the two QR codes every second
+let schoolTimer = null; let qrFlip = 0;
+function schoolPoll() {
+  const want = S.tab === 'family' && schoolBusy(S.school);
+  if (!want) { clearInterval(schoolTimer); schoolTimer = null; return; }
+  if (schoolTimer) return;
+  let tick = 0;
+  schoolTimer = setInterval(async () => {
+    tick += 1;
+    const img = document.getElementById('mitidQr');
+    if (img && S.school?.login_qr2) img.src = svgSrc((qrFlip ^= 1) ? S.school.login_qr2 : S.school.login_qr1);
+    if (tick % 2) return;
+    const { data } = await sb.from('school_links').select(SCHOOL_COLS).maybeSingle();
+    if (!data) return;
+    const before = JSON.stringify([S.school?.status, S.school?.login_qr1, S.school?.login_otp, S.school?.login_note]);
+    S.school = data;
+    if (!schoolBusy(data)) { clearInterval(schoolTimer); schoolTimer = null; return refresh(); }
+    if (JSON.stringify([data.status, data.login_qr1, data.login_otp, data.login_note]) !== before) {
+      const box = document.getElementById('schoolBox');
+      if (box) box.innerHTML = schoolLoginBox();
+    }
+  }, 1000);
+}
+
+function schoolMsgRow(m) {
+  return `<div class="row school-msg ${m.unread ? 'unread' : ''}" data-act="scOpen" data-id="${m.id}">
+    <div class="lead big">${m.kind === 'post' ? '📰' : '✉️'}</div>
+    <div class="body"><div class="ttl">${m.important ? '❗ ' : ''}${esc(m.title || t('sc.' + m.kind))}</div>
+      <div class="meta">${esc(m.sender || '')}${m.sent_at ? ` · ${esc(fmtDate(m.sent_at.slice(0, 10)))}` : ''}${m.unread ? ` · <b>${esc(t('sc.unread'))}</b>` : ''}</div></div></div>`;
+}
+
+// Today: the newest from the last 14 days (unread and important first)
+function schoolInbox() {
+  if (!S.school || !S.schoolMsgs.length) return '';
+  const since = isoMinus(14);
+  const recent = S.schoolMsgs.filter((m) => (m.sent_at || '') >= since)
+    .sort((a, b) => (b.unread - a.unread) || (b.important - a.important) || (b.sent_at || '').localeCompare(a.sent_at || ''));
+  const body = recent.length ? `<div class="list">${recent.slice(0, 5).map(schoolMsgRow).join('')}</div>`
+    : `<p class="empty">${esc(t('sc.none'))}</p>`;
+  return fold('school', esc(t('sc.inbox')), `${body}
+    <button class="small" data-act="scAll">${esc(t('sc.all', { n: S.schoolMsgs.length }))}</button>`, recent.filter((m) => m.unread).length || '');
+}
+
+function schoolMsgDialog(m) {
+  openDialog(`<div class="form school-read">
+    <h2>${m.important ? '❗ ' : ''}${esc(m.title || t('sc.' + m.kind))}</h2>
+    <p class="meta">${esc(t('sc.' + m.kind))} · ${esc(m.sender || '')}${m.sent_at ? ` · ${esc(fmtWhen(m.sent_at))}` : ''}</p>
+    <div class="msg-body">${esc(m.body || '').replace(/\n/g, '<br>')}</div>
+    <div class="btns"><span class="grow"></span><button type="button" data-act="close">${esc(t('sc.close'))}</button></div></div>`);
+}
+
+function schoolAllDialog() {
+  openDialog(`<div class="form"><h2>${esc(t('sc.inbox'))}</h2>
+    <div class="list">${S.schoolMsgs.map(schoolMsgRow).join('')}</div>
+    <div class="btns"><span class="grow"></span><button type="button" data-act="close">${esc(t('sc.close'))}</button></div></div>`);
+}
 
 // ------------------------------------------------------------ price watch
 // Anyone registers a product; a daily check (scheduled Claude task) records the
@@ -3164,6 +3292,21 @@ const ACTIONS = {
     if (mode === 'pick' && was === 'off') toast(t('calPickNote'));
     await refresh();
   },
+  scAddFeed: () => {
+    document.getElementById('feedRows')?.insertAdjacentHTML('beforeend', feedRow({ name: 'ForældreIntra (direkte)' }));
+  },
+  scDelFeed: (id, el) => { el.closest('.feed-row')?.remove(); },
+  scLogin: async () => {
+    await run(sb.rpc('school_link_login'));
+    await refresh();
+  },
+  scSync: async () => { await run(sb.rpc('school_link_sync_now')); toast(t('sc.queued')); await refresh(); },
+  scRemove: async () => {
+    if (!confirm(t('sc.removeConfirm'))) return;
+    await run(sb.rpc('school_link_remove')); S.schoolFeeds = null; await refresh();
+  },
+  scOpen: (id) => { const m = byId(S.schoolMsgs, id); if (m) schoolMsgDialog(m); },
+  scAll: () => schoolAllDialog(),
   openPrices: () => { S.tab = 'prices'; render(); window.scrollTo(0, 0); },
   newWatch: () => watchForm(null),
   openWatch: (id) => { const w = byId(S.watches, id); if (w) watchDetail(w); },
@@ -3231,7 +3374,7 @@ document.addEventListener('click', async (e) => {
   if (!fn) return;
   e.preventDefault();
   el.disabled = true;
-  try { await fn(el.dataset.id); } catch { /* toast already shown */ } finally { el.disabled = false; }
+  try { await fn(el.dataset.id, el); } catch { /* toast already shown */ } finally { el.disabled = false; }
 });
 
 // Moment Find page search: filter the list without re-rendering (keeps the keyboard open)
@@ -3263,6 +3406,17 @@ document.addEventListener('submit', (e) => {
       await refresh();
       await ACTIONS.refreshNearby();
     })().catch(() => {});
+    return;
+  }
+  if (e.target.id === 'schoolForm') {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const names = fd.getAll('fname'); const urls = fd.getAll('furl');
+    const feeds = urls.map((u, i) => ({ name: String(names[i] || '').trim(), url: String(u || '').trim() }))
+      .filter((f) => f.url);
+    feeds.forEach((f) => { if (!f.name) f.name = 'ForældreIntra (direkte)'; });
+    run(sb.rpc('school_link_save', { p_username: fd.get('user'), p_feeds: feeds }))
+      .then(() => { S.schoolFeeds = null; toast(t('sc.saved')); return refresh(); }).catch(() => {});
     return;
   }
   if (e.target.id === 'nameForm') {

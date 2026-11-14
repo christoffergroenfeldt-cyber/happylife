@@ -28,6 +28,7 @@ Danish, English and French – switch on the login screen or under **Setup → L
 | **Event tasks** | Parents tap an event and add tasks with quick suggestions – e.g. *Buy a present* 7 days before Anna's birthday, *Book a restaurant* 14 days before the anniversary. They repeat every year for yearly events, show on Home 14 days before they're due, and work with reminders and points like other tasks. A child can be given an event task without seeing the event. |
 | **Login codes** | Signed in on one device? Setup → *Sign in on another device* makes an 8-character code (valid 10 minutes, works once). On the new device: *Have a login code…?* – no email needed. |
 | **Price watch** 🏷️ | Anyone registers a product they want to buy (I dag → *Prisjagt*): name, model/size/colour, optional link, optional target price, used OK or not, who can see it (whole family / mum and dad / only me – for a secret present 🔒). Every morning a scheduled Claude task searches PriceRunner, Prisjagt and the shops (Danish shops or shipping to Denmark, DKK incl. VAT and shipping, in stock), saves every offer in `price_points` and the day's best in `price_watches`, plus a short 💡 tip (e.g. wait for Black Friday). At 08:00 the `remind` function sends each follower (🔔) one push with today's best price(s), the change since last time, 🎯 when under the target, and a link that opens the product. *Only when the price drops* sends fewer messages. Each product shows a price curve, the lowest price so far and the price history per day with links to the offers. |
+| **School direct** 🏫 | Setup → *Skole direkte*: Aula and ForældreIntra straight from the school, without the phone. Enter the MitID username and/or iCal links (e.g. ForældreIntra), tap **Log in with MitID** and approve in the MitID app (the app shows MitID's QR code or code). A GitHub Action (`school/school_sync.py`, every 5 minutes it checks if anything is due; a sync every ~2 hours) brings Aula's calendar and the feeds in through `sync_calendar` as calendars *Aula – Victor* etc. – set them under *Calendar from iPhone* like the others – and Aula messages (latest per thread) and posts into `school_messages`, shown on **I dag** under 📬. Unofficial Aula access (the `aula` Python library); if Aula changes, it may stop until the library is updated. The job never opens unread Aula threads, so nothing is marked as read. |
 | **Setup** (was Family) | Invite code, members and roles. Only the admin (whoever created the family) can change roles, so a child can't make themself "wife". |
 
 Privacy is enforced in the database (Row Level Security), not just hidden in the app.
@@ -139,6 +140,18 @@ Amounts of Data**.
 
 Children need their own login: any email address works as long as someone can read the
 code (e.g. a parent's address with `+` – `mum+anna@gmail.com` – on Gmail).
+
+### 6. School direct (Aula + ForældreIntra without the phone)
+1. Make a random server key, e.g. `python3 -c "import secrets;print(secrets.token_urlsafe(32))"`.
+2. Repo **Settings → Secrets and variables → Actions → New repository secret**: `HL_SCHOOL_KEY` = the key.
+3. **SQL Editor**: `insert into server_keys values ('school', encode(sha256(convert_to('THE-KEY','UTF8')),'hex')) on conflict (name) do update set key_hash = excluded.key_hash;`
+4. In the app: Setup → *Skole direkte* → MitID username / calendar links → **Save** → **Log in with MitID**.
+   The workflow *School sync* picks it up within ~5–10 minutes (or run it at once under **Actions → School sync → Run workflow**).
+   The MitID QR code changes every second, so show the app on another screen (e.g. an iPad) and scan with the phone – or type the code if MitID shows one.
+5. When *Aula – …* calendars appear under *Calendar from iPhone*, switch the old phone *AULA …* calendars off to avoid doubles.
+
+The repo is public, so the Action's log shows counts only. The Aula session is stored encrypted with the server key; the app can't read it.
+GitHub pauses scheduled workflows in a public repo after 60 days without commits – re-enable it under Actions if that happens.
 
 ## Files
 

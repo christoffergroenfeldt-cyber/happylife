@@ -1858,3 +1858,192 @@ end $$;
 revoke execute on function price_follow(uuid, boolean), price_visible(text, uuid) from anon, public;
 grant execute on function price_follow(uuid, boolean), price_visible(text, uuid) to authenticated;
 revoke execute on function price_refresh(uuid, text, text), price_watch_defaults() from anon, authenticated, public;
+
+-- ================================================================ school (direct: Aula + iCal feeds)
+-- A parent links Aula (MitID) and/or iCal feeds such as ForældreIntra once
+-- (Setup → Skole direkte). A scheduled GitHub Action (school/school_sync.py)
+-- does the rest without the phone: Aula's calendar and the feeds go through
+-- sync_calendar() like the iPhone Shortcut (calendars "Aula – <child>" etc.,
+-- chosen under Calendar from iPhone as usual), Aula messages and posts go to
+-- school_messages. The job proves itself with a server key whose hash is in
+-- server_keys; the Aula session it keeps is encrypted with that key and is
+-- never readable by the app.
+
+create table if not exists server_keys (name text primary key, key_hash text not null);
+alter table server_keys enable row level security;   -- server only
+revoke all on server_keys from anon, authenticated;
+
+create or replace function server_key_ok(p_key text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from server_keys where name = 'school'
+                  and key_hash = encode(sha256(convert_to(coalesce(p_key, ''), 'UTF8')), 'hex'))
+$$;
+
+create table if not exists school_links (
+  user_id        uuid primary key references auth.users on delete cascade,
+  family_id      uuid not null references families on delete cascade,
+  mitid_username text,
+  feeds          jsonb not null default '[]',   -- [{name, url}] iCal feeds, e.g. ForældreIntra
+  aula_session   text,                          -- encrypted by the job; the app can't read it
+  status         text not null default 'off'
+                 check (status in ('off','login_requested','login_running','ok','login_needed','error')),
+  login_qr1      text, login_qr2 text,          -- MitID QR codes (SVG) while a login runs
+  login_otp      text,                          -- or the code to type in the MitID app
+  login_note     text,
+  login_updated  timestamptz,
+  sync_requested boolean not null default false,
+  last_sync_at   timestamptz,
+  last_result    text,
+  created_at     timestamptz not null default now()
+);
+alter table school_links enable row level security;
+drop policy if exists sl_select on school_links;
+create policy sl_select on school_links for select using (user_id = auth.uid());
+revoke all on school_links from anon, authenticated;
+grant select (user_id, family_id, mitid_username, feeds, status, login_qr1, login_qr2, login_otp, login_note,
+              login_updated, sync_requested, last_sync_at, last_result) on school_links to authenticated;
+
+-- Aula messages (one row per thread, latest message) and posts, for the parents
+create table if not exists school_messages (
+  id         uuid primary key default gen_random_uuid(),
+  family_id  uuid not null references families on delete cascade,
+  user_id    uuid not null references auth.users on delete cascade,
+  kind       text not null check (kind in ('message','post')),
+  ext_id     text not null,
+  title      text not null default '',
+  sender     text,
+  body       text,
+  sent_at    timestamptz,
+  important  boolean not null default false,
+  unread     boolean not null default false,
+  first_seen timestamptz not null default now(),
+  unique (user_id, kind, ext_id)
+);
+create index if not exists school_messages_family on school_messages(family_id, sent_at desc);
+alter table school_messages enable row level security;
+drop policy if exists sm_select on school_messages;
+create policy sm_select on school_messages for select using (family_id = my_family() and i_am_parent());
+revoke all on school_messages from anon, authenticated;
+grant select on school_messages to authenticated;
+
+-- App: save MitID username and feeds (a new username forgets the old session)
+create or replace function school_link_save(p_username text, p_feeds jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+declare u text := nullif(btrim(coalesce(p_username, '')), ''); f jsonb := coalesce(p_feeds, '[]'::jsonb);
+begin
+  if not i_am_parent() then raise exception 'parents only'; end if;
+  if jsonb_typeof(f) <> 'array' or jsonb_array_length(f) > 10 then raise exception 'max 10 feeds'; end if;
+  if exists (select 1 from jsonb_array_elements(f) x
+              where jsonb_typeof(x) <> 'object'
+                 or char_length(btrim(coalesce(x->>'name', ''))) not between 1 and 60
+                 or char_length(coalesce(x->>'url', '')) > 1000
+                 or coalesce(x->>'url', '') !~* '^(https?|webcal)://\S{4,}$') then
+    raise exception 'Hvert kalender-link skal have et navn og en adresse, der starter med https:// eller webcal://';
+  end if;
+  if u is not null and (char_length(u) > 100 or u ~ '[[:cntrl:][:space:]]') then raise exception 'bad username'; end if;
+  insert into school_links(user_id, family_id, mitid_username, feeds, sync_requested)
+    values (auth.uid(), my_family(), u, f, true)
+  on conflict (user_id) do update
+    set family_id = excluded.family_id, feeds = excluded.feeds, sync_requested = true,
+        aula_session = case when school_links.mitid_username is distinct from u then null else school_links.aula_session end,
+        status = case when u is null then 'off'
+                      when school_links.mitid_username is distinct from u then 'off' else school_links.status end,
+        mitid_username = u;
+end $$;
+
+-- App: start a MitID login (the job picks it up within a few minutes) / sync now / unlink
+create or replace function school_link_login()
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update school_links set status = 'login_requested', login_qr1 = null, login_qr2 = null, login_otp = null,
+         login_note = null, login_updated = now()
+   where user_id = auth.uid() and mitid_username is not null;
+  if not found then raise exception 'Gem dit MitID-brugernavn først'; end if;
+end $$;
+
+create or replace function school_link_sync_now()
+returns void language sql security definer set search_path = public as $$
+  update school_links set sync_requested = true where user_id = auth.uid()
+$$;
+
+create or replace function school_link_remove()
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  delete from school_messages where user_id = auth.uid();
+  delete from school_links where user_id = auth.uid();
+end $$;
+
+-- Job: the links, and whether each needs work now (login asked for, sync asked
+-- for, or the last sync is over 2 hours old – 4 at night, Danish time)
+create or replace function school_jobs(p_key text)
+returns table (user_id uuid, mitid_username text, feeds jsonb, aula_session text, status text,
+               sync_token text, due boolean)
+language plpgsql security definer set search_path = public as $$
+#variable_conflict use_column
+begin
+  if not server_key_ok(p_key) then raise exception 'bad key'; end if;
+  insert into sync_tokens(user_id) select l.user_id from school_links l on conflict do nothing;
+  -- a login nobody finished within 15 minutes is given up
+  update school_links l set status = 'login_needed', login_qr1 = null, login_qr2 = null, login_otp = null,
+         login_note = 'Login udløb – prøv igen'
+   where l.status in ('login_requested','login_running') and l.login_updated < now() - interval '15 minutes';
+  return query
+  select l.user_id, l.mitid_username, l.feeds, l.aula_session, l.status, st.token,
+         l.status = 'login_requested' or l.sync_requested or l.last_sync_at is null
+         or l.last_sync_at < now() - case when extract(hour from now() at time zone 'Europe/Copenhagen') between 6 and 21
+                                          then interval '115 minutes' else interval '235 minutes' end
+    from school_links l join sync_tokens st on st.user_id = l.user_id
+   where l.mitid_username is not null or jsonb_array_length(l.feeds) > 0;
+end $$;
+
+-- Job: report progress. Only the keys present in p are changed; "synced": true stamps last_sync_at.
+create or replace function school_job_update(p_key text, p_user uuid, p jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not server_key_ok(p_key) then raise exception 'bad key'; end if;
+  update school_links set
+    status        = case when p ? 'status' then p->>'status' else status end,
+    aula_session  = case when p ? 'aula_session' then p->>'aula_session' else aula_session end,
+    login_qr1     = case when p ? 'login_qr1' then p->>'login_qr1' else login_qr1 end,
+    login_qr2     = case when p ? 'login_qr2' then p->>'login_qr2' else login_qr2 end,
+    login_otp     = case when p ? 'login_otp' then p->>'login_otp' else login_otp end,
+    login_note    = case when p ? 'login_note' then left(p->>'login_note', 300) else login_note end,
+    login_updated = case when p ?| array['status','login_qr1','login_otp','login_note'] then now() else login_updated end,
+    last_result   = case when p ? 'last_result' then left(p->>'last_result', 500) else last_result end,
+    last_sync_at  = case when (p->>'synced')::boolean then now() else last_sync_at end,
+    sync_requested = case when (p->>'synced')::boolean then false else sync_requested end
+   where user_id = p_user;
+end $$;
+
+-- Job: messages and posts seen this time [{kind, ext_id, title, sender, body, sent_at, important, unread}].
+-- Older than 60 days are dropped.
+create or replace function school_messages_put(p_key text, p_user uuid, p_items jsonb)
+returns int language plpgsql security definer set search_path = public as $$
+declare fam uuid; n int;
+begin
+  if not server_key_ok(p_key) then raise exception 'bad key'; end if;
+  select family_id into fam from school_links where user_id = p_user;
+  if fam is null then raise exception 'no link'; end if;
+  insert into school_messages(family_id, user_id, kind, ext_id, title, sender, body, sent_at, important, unread)
+  select fam, p_user, x->>'kind', left(x->>'ext_id', 100), left(coalesce(x->>'title', ''), 300),
+         left(x->>'sender', 200), left(x->>'body', 20000), (x->>'sent_at')::timestamptz,
+         coalesce((x->>'important')::boolean, false), coalesce((x->>'unread')::boolean, false)
+    from jsonb_array_elements(coalesce(p_items, '[]'::jsonb)) x
+   where x->>'kind' in ('message','post') and coalesce(x->>'ext_id', '') <> ''
+  on conflict (user_id, kind, ext_id) do update
+    set family_id = excluded.family_id, title = excluded.title, sender = excluded.sender,
+        body = coalesce(excluded.body, school_messages.body), sent_at = excluded.sent_at,
+        important = excluded.important, unread = excluded.unread;
+  get diagnostics n = row_count;
+  delete from school_messages where user_id = p_user and sent_at < now() - interval '60 days';
+  return n;
+end $$;
+
+revoke execute on function server_key_ok(text), school_link_save(text, jsonb), school_link_login(),
+  school_link_sync_now(), school_link_remove(), school_jobs(text), school_job_update(text, uuid, jsonb),
+  school_messages_put(text, uuid, jsonb) from public, anon, authenticated;
+grant execute on function school_link_save(text, jsonb), school_link_login(), school_link_sync_now(),
+  school_link_remove() to authenticated;
+-- the job uses the public anon key + the server key
+grant execute on function school_jobs(text), school_job_update(text, uuid, jsonb),
+  school_messages_put(text, uuid, jsonb) to anon;
