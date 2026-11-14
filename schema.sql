@@ -2106,7 +2106,7 @@ revoke execute on function price_refresh(uuid, text, text) from anon, authentica
 -- The price-check GitHub Action (.github/workflows/price-check.yml) asks every
 -- 5 minutes what to check and saves what it found, with the server key
 -- (HL_SCHOOL_KEY, see server_keys). Due: products queued with "check now",
--- and once a day from 05:30 every active product not checked yet today
+-- and once a day from 02:30 (so its 5-hour usage window ends before morning) every active product not checked yet today
 -- (a product added today waits for its "check now" or tomorrow). At most 10 per run.
 create or replace function price_jobs(p_key text) returns jsonb
 language plpgsql stable security definer set search_path = public as $$
@@ -2124,7 +2124,7 @@ begin
            w.check_requested_at is not null as sort1, w.last_checked as sort2
       from price_watches w
      where w.active and (w.check_requested_at is not null
-        or (tm >= '05:30' and coalesce((w.last_checked at time zone 'Europe/Copenhagen')::date,
+        or (tm >= '02:30' and coalesce((w.last_checked at time zone 'Europe/Copenhagen')::date,
                                        (w.created_at at time zone 'Europe/Copenhagen')::date) < d))
      order by w.check_requested_at is not null desc, w.last_checked nulls first
      limit 10

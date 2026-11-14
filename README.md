@@ -155,7 +155,7 @@ GitHub pauses scheduled workflows in a public repo after 60 days without commits
 
 ### Price watch – the price-check Action
 `.github/workflows/price-check.yml` runs every 5 minutes. A quick step asks the database (`price_jobs()`, with the
-server key) whether anything is due: products someone tapped **Tjek nu** on, or – from 05:30 – the daily check of
+server key) whether anything is due: products someone tapped **Tjek nu** on, or – from 02:30, so its 5-hour Claude usage window has ended before the family wakes – the daily check of
 every product not checked yet today (max 10 per run). Only then Claude Code searches for prices with your Claude
 subscription (`scripts/price-check-prompt.md`; tools: web search/fetch only, it never sees a key) and writes
 `work/offers.json`; `scripts/price-check.mjs save` sends each product to `price_save()`, which checks every offer

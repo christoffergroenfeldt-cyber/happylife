@@ -1,6 +1,6 @@
 # Happy Life – price watch ("Prisjagt"). Every 5 minutes a quick check asks the
 # database whether anything is due: a product someone tapped "Tjek nu" on, or
-# the daily check of every product (from 05:30). Only then Claude Code searches
+# the daily check of every product (from 02:30, so that run's 5-hour Claude usage window ends before morning). Only then Claude Code searches
 # for prices (with the family's Claude subscription) and the results are saved
 # through price_save(), which checks every offer again.
 # Secrets: CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) and HL_SCHOOL_KEY.
