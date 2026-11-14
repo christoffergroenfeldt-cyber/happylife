@@ -8,9 +8,9 @@ In a-Shell, one line (Happy Life → Setup → Skole direkte copies it; a-Shell 
   python3 -c "import urllib.request as u;exec(u.urlopen('<raw url of this file>').read())" <sync code> <MitID username>
 The first run installs the packages it needs (in-process pip – a-Shell can't start subprocesses).
 
-Approve in the MitID app. If MitID asks for a QR code, it is printed here –
-scan it from another device's screen, or choose "can't scan" in the MitID app
-and type the code shown here instead.
+Run it on ANOTHER device than the phone with the MitID app (an iPad, the other
+parent's phone, a Mac): MitID asks to scan a QR code, which this script shows in
+the terminal, and iOS pauses a-Shell while you are in the MitID app.
 """
 
 import asyncio
@@ -149,32 +149,94 @@ def rpc(url, anon, name, args):
     return json.loads(body) if body else None
 
 
+def qr_text(qr):
+    """A QR code as half-block text: dark modules in the text colour (black in
+    a-Shell), so it scans from the screen. Spaces around it are the quiet zone."""
+    m = qr.get_matrix()
+    m = [[False] * len(m[0])] * 2 + m + [[False] * len(m[0])] * 3
+    rows = []
+    for y in range(0, len(m) - 1, 2):
+        top, bot = m[y], m[y + 1]
+        rows.append('  ' + ''.join('█' if t and b else '▀' if t else '▄' if b else ' '
+                                     for t, b in zip(top, bot)))
+    return '\n'.join(rows)
+
+
+def patch_poll():
+    """MitID polling that survives short network drops (a-Shell paused in the
+    background) instead of crashing; otherwise the library's own logic."""
+    import httpx
+    from aula.auth.browser_client import BrowserClient
+    from aula.auth.exceptions import MitIDError
+
+    async def poll(self, poll_url, ticket):
+        drops = 0
+        while True:
+            try:
+                r = await self._client.post(poll_url, json={'ticket': ticket})
+            except httpx.TransportError:
+                drops += 1
+                if drops > 120:
+                    raise
+                await asyncio.sleep(1)
+                continue
+            data = r.json()
+            if not r.is_success:
+                raise MitIDError('Login request was not accepted')
+            if data['status'] == 'OK' and data['confirmation'] is True:
+                return data['payload']['response'], data['payload']['responseSignature']
+            st = data['status']
+            if st == 'channel_validation_otp':
+                self.otp_code = data['channelBindingValue']
+                self.status_message = f'otp:{self.otp_code}'
+            elif st == 'channel_validation_tqr':
+                self._handle_qr_code_poll(data)
+            elif st == 'channel_verified':
+                self.qr1 = self.qr2 = None
+                self.status_message = 'verified'
+            elif st != 'timeout':
+                raise MitIDError(f'Unexpected poll status: {st}')
+            await asyncio.sleep(0.5)
+
+    BrowserClient._poll_for_app_confirmation = poll
+
+
 async def login(username):
+    import logging
+    logging.getLogger('httpx').setLevel(logging.WARNING)
     from aula.auth.mitid_client import MitIDAuthClient
     from aula.auth_flow import _build_token_data
+    patch_poll()
 
+    CLEAR = '\033[2J\033[H'
     async with MitIDAuthClient(mitid_username=username, timeout=60) as ac:
         task = asyncio.create_task(ac.authenticate())
-        shown = None
         t0 = time.time()
+        flip = 0
+        last = None
         while not task.done():
             bc = getattr(ac, '_mitid_client', None)
-            if bc is not None:
-                qr1, otp, note = getattr(bc, 'qr1', None), getattr(bc, 'otp_code', None), getattr(bc, 'status_message', None)
-                state = (id(qr1), otp, note)
-                if state != shown:
-                    shown = state
-                    if note:
-                        print(f'… {note}')
-                    if otp:
-                        print(f'\n   Kode til MitID-appen:   {otp}\n')
-                    if qr1:
-                        print('\nScan med MitID-appen fra en anden skærm, eller vælg "kan ikke scanne":')
-                        qr1.print_ascii(invert=True)
+            note = getattr(bc, 'status_message', None) if bc else None
+            qr1, qr2 = (getattr(bc, 'qr1', None), getattr(bc, 'qr2', None)) if bc else (None, None)
+            if qr1 and qr2:
+                # MitID's two QR codes, shown in turn like on mitid.dk
+                flip ^= 1
+                print(CLEAR + 'Scan med MitID-appen på din telefon:\n')
+                print(qr_text(qr1 if flip else qr2))
+                print('\n(Knib for at gøre teksten mindre, hvis koden ikke er hel.)')
+                last = 'qr'
+            elif note != last:
+                last = note
+                if note == 'verified':
+                    print(CLEAR + '✓ Koden er scannet – godkend nu i MitID-appen …')
+                elif note and note.startswith('otp:'):
+                    print(f'\n   Skriv denne kode i MitID-appen:   {note[4:]}\n')
+                elif note:
+                    print('… Åbn MitID-appen på din telefon og godkend. Vises en QR-kode her, så scan den.')
             if time.time() - t0 > 300:
                 task.cancel()
                 break
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.8)
         try:
             await task
         except asyncio.CancelledError:
