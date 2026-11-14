@@ -11,7 +11,7 @@ const logic = src.slice(src.indexOf('// ----------------------------------------
   src.indexOf('// ------------------------------------------------------------ logic end'));
 const file = join(mkdtempSync(join(tmpdir(), 'remind-')), 'logic.ts');
 writeFileSync(file, logic);
-const { localNow, dueOccurrence, whoToRemind, reminderBody } = await import(file);
+const { localNow, dueOccurrence, whoToRemind, reminderBody, priceStatus, priceDigest, priceMessage } = await import(file);
 
 const base = {
   id: 't1', family_id: 'f', title: 'Tøm opvaskeren', roles: [], assignees: [], open: false, need: 1,
@@ -137,4 +137,49 @@ test('notification text', () => {
   assert.match(reminderBody('da', 1, '2026-11-10', 0), /^Frist i morgen \(tirsdag 10\. november\)$/);
   assert.match(reminderBody('en', 3, '2026-11-12', 2), /^Due in 3 days \(Thursday 12 November\) · 2 more people needed/);
   assert.match(reminderBody('fr', 0, '2026-11-09', 1), /^À faire aujourd’hui · encore 1 personne/);
+});
+
+// ------------------------------------------------------------ price watch
+const W = { id: 'w1', family_id: 'f', title: 'LEGO 42172', notify: 'daily', visible_to: 'family', active: true,
+  created_by: 'kid', followers: ['kid', 'dad'], target_price: null, allow_used: false, best_price: 1199, best_shop: 'Proshop', last_checked: 'x' };
+const pts = [
+  { watch_id: 'w1', checked_on: '2026-11-12', price: 1399, shipping: 0, used: false, in_stock: true },
+  { watch_id: 'w1', checked_on: '2026-11-13', price: 1299, shipping: 49, used: false, in_stock: true },
+  { watch_id: 'w1', checked_on: '2026-11-14', price: 1199, shipping: 0, used: false, in_stock: true },
+  { watch_id: 'w1', checked_on: '2026-11-14', price: 999, shipping: 0, used: true, in_stock: true },
+  { watch_id: 'w1', checked_on: '2026-11-14', price: 899, shipping: 0, used: false, in_stock: false },
+];
+const fam = [{ user_id: 'kid', roles: ['child'], family_id: 'f' }, { user_id: 'dad', roles: ['father'], family_id: 'f' },
+  { user_id: 'mom', roles: ['mother'], family_id: 'f' }];
+
+test('price status: today vs last time, lowest, target', () => {
+  assert.deepEqual(priceStatus(W, pts, '2026-11-14'), { best: 1199, prev: 1348, change: -149, lowest: true, atTarget: false });
+  assert.equal(priceStatus({ ...W, target_price: '1200' }, pts, '2026-11-14').atTarget, true);
+  assert.equal(priceStatus({ ...W, allow_used: true }, pts, '2026-11-14').best, 999);
+  assert.equal(priceStatus(W, pts, '2026-11-15').best, null);
+});
+
+test('price digest: from 08:00, checked today, followers who can see it', () => {
+  const yes = () => true;
+  assert.deepEqual(priceDigest([W], pts, fam, '2026-11-14', '07:59', yes), {});
+  assert.deepEqual(Object.keys(priceDigest([W], pts, fam, '2026-11-14', '08:00', yes)).sort(), ['dad', 'kid']);
+  assert.deepEqual(priceDigest([W], pts, fam, '2026-11-14', '09:00', () => false), {});
+  // parents-only: the child stops getting it; "me": only the creator
+  assert.deepEqual(Object.keys(priceDigest([{ ...W, visible_to: 'parents', created_by: 'dad' }], pts, fam, '2026-11-14', '09:00', yes)), ['dad']);
+  assert.deepEqual(Object.keys(priceDigest([{ ...W, visible_to: 'me', followers: ['dad', 'mom'] }], pts, fam, '2026-11-14', '09:00', yes)), []);
+  // only on drops: today is cheaper → sent; unchanged → not
+  assert.equal(Object.keys(priceDigest([{ ...W, notify: 'drop' }], pts, fam, '2026-11-14', '09:00', yes)).length, 2);
+  const flat = [...pts, { watch_id: 'w1', checked_on: '2026-11-15', price: 1199, shipping: 0, used: false, in_stock: true }];
+  assert.equal(Object.keys(priceDigest([{ ...W, notify: 'drop' }], flat, fam, '2026-11-15', '09:00', yes)).length, 0);
+  assert.equal(Object.keys(priceDigest([{ ...W, notify: 'off' }], pts, fam, '2026-11-14', '09:00', yes)).length, 0);
+});
+
+test('price message: one product or a list', () => {
+  const st = priceStatus(W, pts, '2026-11-14');
+  const one = priceMessage('da', [{ w: W, st }]);
+  assert.match(one.title, /LEGO 42172: 1\.199\skr\./);
+  assert.match(one.body, /billigst hos Proshop · ↓ 149\skr\. siden sidst · laveste pris hidtil/);
+  const many = priceMessage('en', [{ w: W, st }, { w: { ...W, title: 'Airfryer', best_shop: 'Power' }, st }]);
+  assert.equal(many.title, '🏷️ Today’s best prices');
+  assert.equal(many.body.split('\n').length, 2);
 });

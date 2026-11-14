@@ -27,6 +27,7 @@ Danish, English and French – switch on the login screen or under **Setup → L
 | **Find events** 🔍 | Busy feeds like Aula, ForældreIntra or a timetable (subscribed on the iPhone) are set to **Pick** under Setup → Calendar from iPhone instead of **All**. Their events then wait under **Calendar → Find events**: a list grouped by day with a HØBK-style **Filter** sheet (calendars, period, new/followed/hidden, weekly series on/off; active choices as removable chips, remembered on the phone) and a search box. **Follow** puts an event in the calendar and opens it for tasks; **✕** hides it. If the school moves a followed event or renames it, the event and its tasks follow at the next sync; if it's cancelled, they go. |
 | **Event tasks** | Parents tap an event and add tasks with quick suggestions – e.g. *Buy a present* 7 days before Anna's birthday, *Book a restaurant* 14 days before the anniversary. They repeat every year for yearly events, show on Home 14 days before they're due, and work with reminders and points like other tasks. A child can be given an event task without seeing the event. |
 | **Login codes** | Signed in on one device? Setup → *Sign in on another device* makes an 8-character code (valid 10 minutes, works once). On the new device: *Have a login code…?* – no email needed. |
+| **Price watch** 🏷️ | Anyone registers a product they want to buy (I dag → *Prisjagt*): name, model/size/colour, optional link, optional target price, used OK or not, who can see it (whole family / mum and dad / only me – for a secret present 🔒). Every morning a scheduled Claude task searches PriceRunner, Prisjagt and the shops (Danish shops or shipping to Denmark, DKK incl. VAT and shipping, in stock), saves every offer in `price_points` and the day's best in `price_watches`, plus a short 💡 tip (e.g. wait for Black Friday). At 08:00 the `remind` function sends each follower (🔔) one push with today's best price(s), the change since last time, 🎯 when under the target, and a link that opens the product. *Only when the price drops* sends fewer messages. Each product shows a price curve, the lowest price so far and the price history per day with links to the offers. |
 | **Setup** (was Family) | Invite code, members and roles. Only the admin (whoever created the family) can change roles, so a child can't make themself "wife". |
 
 Privacy is enforced in the database (Row Level Security), not just hidden in the app.
@@ -153,7 +154,8 @@ code (e.g. a parent's address with `+` – `mum+anna@gmail.com` – on Gmail).
 | `supabase/functions/remind/index.ts` | Edge Function that sends task reminders |
 | `cron.sql` | Runs the reminder function every 5 minutes |
 | `supabase/functions/login-code/index.ts` | Edge Function that redeems login codes |
-| `tests/remind.test.mjs` | Tests for the reminder rules: `node --test tests/remind.test.mjs` |
+| `tests/remind.test.mjs` | Tests for the reminder and price-push rules: `node --test tests/remind.test.mjs` |
+| `tests/price-watch.test.mjs` | Database tests for the price watch (PGlite) |
 
 ## Ideas for later
 - Push notifications when a moment is due (the `remind` function can do this the same way)

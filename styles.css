@@ -618,3 +618,26 @@ details.fold > summary::after { content: '▾'; color: var(--muted); font-size: 
 details.fold:not([open]) > summary::after { transform: rotate(-90deg); }
 details.fold > summary + * { margin-top: 0; }
 .also .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px 10px; margin-bottom: 8px; }
+
+/* ---------------------------------------------------------------- price watch */
+.watch .w-head { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.watch .w-head .body { flex: 1; min-width: 0; }
+.watch h3 { margin: 0; }
+.w-price { flex: none; text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.w-price b { font-size: 1.35rem; white-space: nowrap; }
+.w-price.small b { font-size: 1rem; }
+.w-price .chip { font-size: .78rem; }
+.chip.up { background: #fde8e4; color: #b4432f; font-weight: 700; }
+.w-spark { color: var(--accent); margin: 8px 0 4px; }
+.spark { display: block; width: 100%; height: 30px; }
+.w-spark.big .spark { height: 70px; }
+.watch.target { border-color: var(--ok); }
+.watch.paused { opacity: .6; }
+a.offer { display: inline-flex; align-items: center; padding: 8px 14px; border-radius: 12px; background: var(--accent); color: var(--accent-ink);
+  font-weight: 700; text-decoration: none; }
+.w-price a.offer, .phist a.offer { background: none; color: var(--accent); padding: 0; font-weight: 600; }
+.row.muted { opacity: .55; }
+.phist { width: 100%; border-collapse: collapse; font-size: .92rem; }
+.phist td { padding: 5px 4px; border-bottom: 1px solid var(--line); }
+.phist td:last-child { text-align: right; }
+@media (prefers-color-scheme: dark) { .chip.up { background: #4a2620; color: #ffb4a6; } }

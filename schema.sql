@@ -1713,3 +1713,148 @@ begin
 end $$;
 revoke execute on function rename_person(text, text) from public, anon;
 grant execute on function rename_person(text, text) to authenticated;
+
+-- ================================================================ price watch
+-- Anyone in the family registers a product to watch. A daily price check (a
+-- scheduled Claude task, writing with the service role) records the offers it
+-- finds in price_points and calls price_refresh(), which sets the current best
+-- price. The `remind` Edge Function then sends each follower one push a day
+-- with the best prices (or only when a price drops / hits the target).
+--   visible_to: 'me' (e.g. a secret present), 'parents' or 'family'
+--   notify:     'daily', 'drop' (only when cheaper or at the target) or 'off'
+
+create table if not exists price_watches (
+  id           uuid primary key default gen_random_uuid(),
+  family_id    uuid not null default my_family() references families on delete cascade,
+  title        text not null check (length(btrim(title)) between 1 and 120),
+  details      text check (length(details) <= 500),          -- model, size, colour, EAN …
+  ref_url      text check (ref_url is null or ref_url ~ '^https?://'),
+  target_price numeric(10,2) check (target_price is null or target_price > 0),
+  allow_used   boolean not null default false,
+  notify       text not null default 'daily' check (notify in ('daily','drop','off')),
+  visible_to   text not null default 'family' check (visible_to in ('me','parents','family')),
+  followers    uuid[] not null default '{}',
+  active       boolean not null default true,
+  created_by   uuid default auth.uid() references auth.users on delete set null,
+  created_at   timestamptz not null default now(),
+  -- written by the price check only
+  best_price   numeric(10,2),
+  best_shop    text,
+  best_url     text,
+  best_used    boolean not null default false,
+  advice       text,                                          -- short tip: buy now / wait for …
+  last_checked timestamptz,
+  check_note   text,                                          -- e.g. "not found today"
+  source_urls  text[] not null default '{}'                   -- pages the check re-reads every day
+);
+alter table price_watches add column if not exists source_urls text[] not null default '{}';
+create index if not exists price_watches_family on price_watches(family_id);
+
+create table if not exists price_points (
+  id         bigserial primary key,
+  watch_id   uuid not null references price_watches on delete cascade,
+  checked_on date not null default (now() at time zone 'Europe/Copenhagen')::date,
+  shop       text not null check (length(shop) between 1 and 80),
+  price      numeric(10,2) not null check (price > 0),       -- DKK incl. VAT
+  shipping   numeric(10,2) check (shipping is null or shipping >= 0),
+  url        text not null check (url ~ '^https://'),
+  used       boolean not null default false,
+  in_stock   boolean,
+  note       text check (length(note) <= 200),
+  created_at timestamptz not null default now(),
+  unique (watch_id, checked_on, shop, used)
+);
+create index if not exists price_points_watch on price_points(watch_id, checked_on);
+
+-- Which daily price pushes went out (server only)
+create table if not exists price_notified (
+  user_id uuid not null references auth.users on delete cascade,
+  on_date date not null,
+  sent_at timestamptz not null default now(),
+  primary key (user_id, on_date)
+);
+
+create or replace function price_visible(p_vis text, p_creator uuid) returns boolean
+language sql stable set search_path = public as $$
+  select p_creator = auth.uid() or p_vis = 'family' or (p_vis = 'parents' and i_am_parent())
+$$;
+
+-- The creator follows their own product from the start
+create or replace function price_watch_defaults() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.created_by is not null and not new.created_by = any(new.followers) then
+    new.followers := new.followers || new.created_by;
+  end if;
+  return new;
+end $$;
+drop trigger if exists price_watch_defaults on price_watches;
+create trigger price_watch_defaults before insert on price_watches
+  for each row execute function price_watch_defaults();
+
+alter table price_watches  enable row level security;
+alter table price_points   enable row level security;
+alter table price_notified enable row level security;   -- server only
+
+drop policy if exists pw_select on price_watches;
+create policy pw_select on price_watches for select
+  using (family_id = my_family() and price_visible(visible_to, created_by));
+drop policy if exists pw_insert on price_watches;
+create policy pw_insert on price_watches for insert
+  with check (family_id = my_family() and created_by = auth.uid());
+drop policy if exists pw_update on price_watches;
+create policy pw_update on price_watches for update
+  using (family_id = my_family() and price_visible(visible_to, created_by)
+         and (created_by = auth.uid() or i_am_parent()))
+  with check (family_id = my_family() and (visible_to <> 'me' or created_by = auth.uid()));
+drop policy if exists pw_delete on price_watches;
+create policy pw_delete on price_watches for delete
+  using (family_id = my_family() and price_visible(visible_to, created_by)
+         and (created_by = auth.uid() or i_am_parent()));
+
+drop policy if exists pp_select on price_points;
+create policy pp_select on price_points for select
+  using (exists (select 1 from price_watches w where w.id = watch_id));
+
+-- The app may only write the user's own fields; best_* etc. come from the check
+revoke all on price_watches, price_points, price_notified from anon, authenticated;
+grant select on price_watches, price_points to authenticated;
+grant insert (title, details, ref_url, target_price, allow_used, notify, visible_to) on price_watches to authenticated;
+grant update (title, details, ref_url, target_price, allow_used, notify, visible_to, active) on price_watches to authenticated;
+grant delete on price_watches to authenticated;
+
+-- Follow / unfollow (daily push) a product I can see
+create or replace function price_follow(p_id uuid, p_on boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update price_watches
+     set followers = case when p_on then array(select distinct x from unnest(followers || auth.uid()) x)
+                          else array_remove(followers, auth.uid()) end
+   where id = p_id and family_id = my_family() and price_visible(visible_to, created_by);
+  if not found then raise exception 'not found'; end if;
+end $$;
+
+-- After the check: best offer of the day (in stock unless unknown; used only if allowed)
+create or replace function price_refresh(p_id uuid, p_advice text default null, p_note text default null)
+returns void language plpgsql security definer set search_path = public as $$
+declare w price_watches; b price_points; d date := (now() at time zone 'Europe/Copenhagen')::date;
+begin
+  select * into w from price_watches where id = p_id;
+  if not found then raise exception 'not found'; end if;
+  select * into b from price_points
+   where watch_id = p_id and checked_on = d and in_stock is distinct from false and (w.allow_used or not used)
+   order by price + coalesce(shipping, 0), used, shop limit 1;
+  update price_watches set
+    best_price = case when b.id is null then best_price else b.price + coalesce(b.shipping, 0) end,
+    best_shop  = case when b.id is null then best_shop else b.shop end,
+    best_url   = case when b.id is null then best_url else b.url end,
+    best_used  = case when b.id is null then best_used else b.used end,
+    advice     = coalesce(p_advice, advice),
+    check_note = case when b.id is null then coalesce(p_note, 'Ingen tilbud fundet i dag') else p_note end,
+    last_checked = now()
+   where id = p_id;
+end $$;
+
+revoke execute on function price_follow(uuid, boolean), price_visible(text, uuid) from anon, public;
+grant execute on function price_follow(uuid, boolean), price_visible(text, uuid) to authenticated;
+revoke execute on function price_refresh(uuid, text, text), price_watch_defaults() from anon, authenticated, public;

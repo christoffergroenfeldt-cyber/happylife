@@ -162,6 +162,91 @@ export function reminderBody(lang: string, before: number, deadline: string, mis
   const when = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
   return (before > 0 ? tx.before(before, when) : tx.today(0)) + (missing > 0 ? tx.missing(missing) : '');
 }
+
+// ------------------------------------------------------------ price watch
+// One push a day per person with the best prices of the products they follow,
+// once the daily price check has run (sent from PRICE_TIME, local time).
+export const PRICE_TIME = '08:00';
+type Watch = {
+  id: string; family_id: string; title: string; notify: string; visible_to: string; active: boolean;
+  created_by: string | null; followers: string[]; target_price: number | string | null; allow_used: boolean;
+  best_price: number | string | null; best_shop: string | null; last_checked: string | null;
+};
+type Point = { watch_id: string; checked_on: string; price: number | string; shipping: number | string | null;
+  used: boolean; in_stock: boolean | null };
+
+// Best total price per day (in stock unless unknown; used only when allowed)
+export function dailyBest(w: Watch, points: Point[]) {
+  const best: Record<string, number> = {};
+  for (const p of points) {
+    if (p.watch_id !== w.id || p.in_stock === false || (p.used && !w.allow_used)) continue;
+    const v = Number(p.price) + Number(p.shipping || 0);
+    if (!(p.checked_on in best) || v < best[p.checked_on]) best[p.checked_on] = v;
+  }
+  return best;
+}
+
+export function priceStatus(w: Watch, points: Point[], today: string) {
+  const days = dailyBest(w, points);
+  const best = days[today] ?? null;
+  const earlier = Object.keys(days).filter((d) => d < today).sort();
+  const prev = earlier.length ? days[earlier[earlier.length - 1]] : null;
+  const low = earlier.length ? Math.min(...earlier.map((d) => days[d])) : null;
+  const target = w.target_price == null ? null : Number(w.target_price);
+  return {
+    best, prev, change: best != null && prev != null ? Math.round((best - prev) * 100) / 100 : null,
+    lowest: best != null && low != null && best < low, atTarget: best != null && target != null && best <= target,
+  };
+}
+
+// Who gets which products today: { userId: [watch, status][] }
+export function priceDigest(watches: Watch[], points: Point[], members: (Member & { family_id: string })[],
+                            today: string, now: string, checkedToday: (w: Watch) => boolean) {
+  const out: Record<string, { w: Watch; st: ReturnType<typeof priceStatus> }[]> = {};
+  if (now < PRICE_TIME) return out;
+  for (const w of watches) {
+    if (!w.active || w.notify === 'off' || !checkedToday(w)) continue;
+    const st = priceStatus(w, points, today);
+    if (st.best == null) continue;
+    if (w.notify === 'drop' && !((st.change ?? 0) < 0 || st.atTarget || st.lowest)) continue;
+    for (const u of w.followers || []) {
+      const m = members.find((x) => x.user_id === u && x.family_id === w.family_id);
+      if (!m) continue;
+      const sees = w.created_by === u || w.visible_to === 'family'
+        || (w.visible_to === 'parents' && m.roles.some((r) => r === 'mother' || r === 'father'));
+      if (sees) (out[u] ||= []).push({ w, st });
+    }
+  }
+  return out;
+}
+
+const PTEXT: Record<string, Record<string, (x?: string) => string>> = {
+  da: { many: () => 'Dagens bedste priser', at: (s) => `billigst hos ${s}`, since: (x) => `${x} siden sidst`,
+        lowest: () => 'laveste pris hidtil', target: () => 'under din målpris 🎯', same: () => 'uændret' },
+  en: { many: () => 'Today’s best prices', at: (s) => `cheapest at ${s}`, since: (x) => `${x} since last time`,
+        lowest: () => 'lowest price so far', target: () => 'below your target 🎯', same: () => 'unchanged' },
+  fr: { many: () => 'Meilleurs prix du jour', at: (s) => `le moins cher chez ${s}`, since: (x) => `${x} depuis la dernière fois`,
+        lowest: () => 'prix le plus bas à ce jour', target: () => 'sous votre prix cible 🎯', same: () => 'inchangé' },
+};
+const LOC: Record<string, string> = { da: 'da-DK', en: 'en-GB', fr: 'fr-FR' };
+export const kr = (lang: string, v: number) => new Intl.NumberFormat(LOC[lang] || 'da-DK',
+  { style: 'currency', currency: 'DKK', maximumFractionDigits: v % 1 ? 2 : 0 }).format(v);
+
+export function priceMessage(lang: string, items: { w: Watch; st: ReturnType<typeof priceStatus> }[]) {
+  const tx = PTEXT[lang] || PTEXT.da;
+  const extras = (st: ReturnType<typeof priceStatus>) => [
+    st.change == null ? '' : st.change === 0 ? tx.same() : tx.since(`${st.change < 0 ? '↓' : '↑'} ${kr(lang, Math.abs(st.change))}`),
+    st.lowest ? tx.lowest() : '', st.atTarget ? tx.target() : ''].filter(Boolean);
+  if (items.length === 1) {
+    const { w, st } = items[0];
+    return { title: `🏷️ ${w.title}: ${kr(lang, st.best!)}`,
+             body: [tx.at(w.best_shop || '?'), ...extras(st)].join(' · ') };
+  }
+  return { title: `🏷️ ${tx.many()}`,
+           body: items.map(({ w, st }) => `${w.title}: ${kr(lang, st.best!)}${w.best_shop ? ` (${w.best_shop})` : ''}`
+             + (st.change ? ` ${st.change < 0 ? '↓' : '↑'}${kr(lang, Math.abs(st.change))}` : '')
+             + (st.atTarget ? ' 🎯' : '')).join('\n') };
+}
 // ------------------------------------------------------------ logic end
 
 const cors = {
@@ -244,7 +329,34 @@ Deno.serve(async (req) => {
         url: appUrl, tag: `${task.id}:${occ.period}`,
       }));
     }
-    return json({ today, now, sent });
+    // Daily price push (a missing table just means an older database)
+    let priceSent = 0;
+    if (now >= PRICE_TIME) {
+      const { data: watches } = await admin.from('price_watches').select('*').eq('active', true).neq('notify', 'off')
+        .gte('last_checked', new Date(Date.now() - 36 * 3600 * 1000).toISOString());
+      if (watches?.length) {
+        const ids = watches.map((w) => w.id);
+        const [{ data: points }, { data: members }, { data: sentRows }] = await Promise.all([
+          admin.from('price_points').select('watch_id,checked_on,price,shipping,used,in_stock').in('watch_id', ids)
+            .gte('checked_on', addDays(today, -400)),
+          admin.from('members').select('user_id,roles,family_id'),
+          admin.from('price_notified').select('user_id').eq('on_date', today),
+        ]);
+        const digest = priceDigest(watches as Watch[], (points ?? []) as Point[], members ?? [], today, now,
+          (w) => !!w.last_checked && localNow(tz, new Date(w.last_checked)).date === today);
+        for (const [user, items] of Object.entries(digest)) {
+          if ((sentRows ?? []).some((r) => r.user_id === user)) continue;
+          const { data: claimed } = await admin.from('price_notified')
+            .upsert({ user_id: user, on_date: today }, { onConflict: 'user_id,on_date', ignoreDuplicates: true }).select('user_id');
+          if (!claimed?.length) continue;
+          priceSent += await sendTo([user], (lang) => ({
+            ...priceMessage(lang, items),
+            url: `${appUrl}?prices=${items.length === 1 ? items[0].w.id : 'all'}`, tag: `prices:${today}`,
+          }));
+        }
+      }
+    }
+    return json({ today, now, sent, priceSent });
   } catch (e) {
     console.error(e);
     return json({ error: String((e as Error).message || e) }, 500);

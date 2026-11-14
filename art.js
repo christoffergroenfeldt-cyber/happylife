@@ -117,3 +117,11 @@ export const PAGE_ART = {
     <path d="M118 132h40" stroke="#8A5A35" stroke-width="6" stroke-linecap="round"/>`),
 };
 PAGE_ART.plan = PAGE_ART.house;
+
+// Price watch: a price tag under the sun
+PAGE_ART.prices = svg(170, 140, `
+  <circle cx="132" cy="32" r="20" fill="#FFC24D"/>
+  <path d="M34 62l46-34h52v52l-46 34a8 8 0 0 1-11 0L34 73a8 8 0 0 1 0-11z" fill="#6BB84A" transform="rotate(8 85 75)"/>
+  <circle cx="112" cy="50" r="7" fill="#F3F9E8" transform="rotate(8 85 75)"/>
+  <path d="M70 86l26-26M74 66h.01M92 82h.01" stroke="#F3F9E8" stroke-width="6" stroke-linecap="round" transform="rotate(8 85 75)"/>
+  <path d="M8 132q40-18 80-6t74-4" stroke="#8A5A35" stroke-width="5" fill="none" stroke-linecap="round"/>`);

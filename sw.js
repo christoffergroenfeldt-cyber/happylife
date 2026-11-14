@@ -1,5 +1,5 @@
 // Happy Life service worker: app shell offline, data always live from Supabase.
-const CACHE = 'happylife-v41';
+const CACHE = 'happylife-v42';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'i18n.js', 'dates.js', 'art.js', 'config.js', 'templates.js', 'catalog.js', 'places.js',
   'manifest.json', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 
@@ -47,7 +47,7 @@ self.addEventListener('notificationclick', (e) => {
   e.notification.close();
   const target = new URL(e.notification.data?.url || './', self.registration.scope).href;
   e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
-    for (const c of list) if ('focus' in c) return c.focus();
+    for (const c of list) if ('focus' in c) { c.postMessage({ open: target }); return c.focus(); }
     return self.clients.openWindow(target);
   }));
 });

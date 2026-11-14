@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '41'; // keep in step with CACHE in sw.js
+const APP_VERSION = '42'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -50,6 +50,7 @@ const S = {
   find: null, nearby: null, nearbyMeta: null, findItems: [],
   packs: [], packDone: [], todayDay: null,
   fdReady: false, fdOrder: [], fdIdeas: [], fdWeeks: [],
+  watches: [], wpoints: [], pricesReady: false,
   skemaWho: null, skemaWeek: null, skemaDay: null, skemaHidden: null,
   tab: 'today', authStep: 'email', authEmail: '', setupMode: pendingInvite() ? 'join' : 'create', ideaShift: {}, pushOn: false,
 };
@@ -141,6 +142,13 @@ async function loadAll() {
     sb.from('famday_weeks').select('*').gte('week_start', isoMinus(200)),
   ]);
   S.fdReady = !fd.error && !fdIdeas.error;
+  // Price watch (a missing table just means an older database)
+  const [pw, pp] = await Promise.all([
+    sb.from('price_watches').select('*').order('created_at'),
+    sb.from('price_points').select('*').gte('checked_on', isoMinus(400)).order('checked_on'),
+  ]);
+  S.pricesReady = !pw.error;
+  Object.assign(S, { watches: pw.data || [], wpoints: pp.data || [] });
   // Skema subjects hidden by the family (null = older database without the table)
   const sh = await sb.from('skema_hidden').select('title');
   S.skemaHidden = sh.error ? null : sh.data.map((x) => x.title.toLowerCase());
@@ -318,7 +326,7 @@ function render() {
   if (!S.session) return renderAuth();
   if (!S.me) return renderSetup();
   const tabs = ['today', 'tasks', ...(isParent() ? ['plan'] : []), 'moments', 'calendar', 'family'];
-  if (!tabs.includes(S.tab)) S.tab = 'today';
+  if (!tabs.includes(S.tab) && !(S.tab === 'prices' && S.pricesReady)) S.tab = 'today';
   const svg = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
   const icons = {
     today: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>'),
@@ -329,7 +337,7 @@ function render() {
     calendar: svg('<rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/>'),
     family: svg('<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2A4.5 4.5 0 0 1 21 18.5"/>'),
   };
-  const views = { today: viewToday, home: viewHome, tasks: viewTasks, plan: viewPlan, moments: viewMoments, calendar: viewCalendar, family: viewFamily };
+  const views = { today: viewToday, home: viewHome, tasks: viewTasks, plan: viewPlan, moments: viewMoments, calendar: viewCalendar, family: viewFamily, prices: viewPrices };
   app.innerHTML = `
     <header class="top hero hero-${S.tab === 'today' ? 'home' : S.tab}">
       <div class="hero-text">
@@ -766,6 +774,7 @@ function viewToday() {
     ${isToday ? fold('who', `👨‍👩‍👧‍👦 ${esc(t('pk.whoWhat'))}`, familyTodaySection()) : ''}
     ${fold('snart', `🗓️ ${esc(t('upcoming'))}`, snart, all.length)}
     ${fold('moments', `💛 ${esc(t('timeFor'))}`, moments, due.length || '')}
+    ${pricesTeaser()}
     ${parent && !anyTags ? `<p class="hint">💡 ${esc(t('td.tagHint'))}</p>` : ''}`;
 }
 
@@ -2712,6 +2721,180 @@ function memberForm(m) {
   };
 }
 
+
+// ------------------------------------------------------------ price watch
+// Anyone registers a product; a daily check (scheduled Claude task) records the
+// offers it finds and the best price. Followers get one push a day.
+
+const kr = (v, dec) => (v == null ? '–' : new Intl.NumberFormat(LOCALE(), { style: 'currency', currency: 'DKK',
+  maximumFractionDigits: dec ?? (Number(v) % 1 ? 2 : 0) }).format(Number(v)));
+const watchPoints = (id) => S.wpoints.filter((p) => p.watch_id === id);
+const canEditWatch = (w) => w.created_by === uid() || isParent();
+const following = (w) => (w.followers || []).includes(uid());
+
+// Best total price per day (in stock unless unknown; used only when allowed) – same rule as the server
+function dailyBest(w) {
+  const best = {};
+  watchPoints(w.id).forEach((p) => {
+    if (p.in_stock === false || (p.used && !w.allow_used)) return;
+    const v = Number(p.price) + Number(p.shipping || 0);
+    if (!(p.checked_on in best) || v < best[p.checked_on]) best[p.checked_on] = v;
+  });
+  return Object.entries(best).sort(([a], [b]) => a.localeCompare(b));
+}
+
+function watchStatus(w) {
+  const days = dailyBest(w);
+  const last = days[days.length - 1];
+  const prev = days[days.length - 2];
+  const low = days.length ? Math.min(...days.map(([, v]) => v)) : null;
+  const best = w.best_price != null ? Number(w.best_price) : last ? last[1] : null;
+  const target = w.target_price != null ? Number(w.target_price) : null;
+  return { days, best, change: last && prev ? last[1] - prev[1] : null, low, lowDay: days.find(([, v]) => v === low)?.[0],
+    atTarget: best != null && target != null && best <= target, isLow: best != null && days.length > 1 && best <= low };
+}
+
+function sparkline(days) {
+  const pts = days.slice(-90);
+  if (pts.length < 2) return '';
+  const vals = pts.map(([, v]) => v);
+  const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1;
+  const xy = pts.map(([, v], i) => `${(i / (pts.length - 1)) * 100},${(28 - ((v - lo) / span) * 24).toFixed(1)}`);
+  return `<svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true">
+    <polyline points="${xy.join(' ')}" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;
+}
+
+function changeChip(st) {
+  if (st.change == null || st.change === 0) return '';
+  const down = st.change < 0;
+  return `<span class="chip ${down ? 'yes' : 'up'}">${down ? '↓' : '↑'} ${esc(kr(Math.abs(st.change)))}</span>`;
+}
+
+function offerLink(url, label) {
+  return url ? `<a class="offer" href="${esc(url)}" target="_blank" rel="noopener">${esc(label)} ↗</a>` : '';
+}
+
+function watchCard(w) {
+  const st = watchStatus(w);
+  const checked = w.last_checked ? fmtDate(todayISO(new Date(w.last_checked)), getLang()) : null;
+  return `<div class="card watch ${w.active ? '' : 'paused'} ${st.atTarget ? 'target' : ''}">
+    <div class="w-head" data-act="openWatch" data-id="${w.id}">
+      <div class="body"><h3>${esc(w.title)}${w.visible_to === 'me' ? ' 🔒' : ''}</h3>
+        <div class="meta">${w.details ? esc(w.details) + ' · ' : ''}${esc(memberName(w.created_by))}</div></div>
+      <div class="w-price"><b>${esc(kr(st.best))}</b>${changeChip(st)}</div>
+    </div>
+    ${st.days.length > 1 ? `<div class="w-spark">${sparkline(st.days)}</div>` : ''}
+    <div class="meta">${w.best_shop ? `${esc(t('pr.cheapestAt', { shop: w.best_shop }))}${w.best_used ? ` (${esc(t('pr.used'))})` : ''} · ` : ''}
+      ${st.isLow ? `<strong>${esc(t('pr.lowest'))}</strong> · ` : st.low != null && st.best != null && st.low < st.best ? `${esc(t('pr.lowWas', { price: kr(st.low), date: fmtDate(st.lowDay, getLang()) }))} · ` : ''}
+      ${st.atTarget ? `<strong>🎯 ${esc(t('pr.atTarget'))}</strong> · ` : w.target_price ? `🎯 ${esc(kr(w.target_price))} · ` : ''}
+      ${checked ? esc(t('pr.checked', { date: checked })) : esc(t('pr.notYet'))}</div>
+    ${w.check_note ? `<div class="meta">ℹ️ ${esc(w.check_note)}</div>` : ''}
+    ${w.advice ? `<div class="idea">💡 ${esc(w.advice)}</div>` : ''}
+    <div class="acts">
+      ${offerLink(w.best_url, t('pr.toOffer'))}
+      <button class="small" data-act="followWatch" data-id="${w.id}">${following(w) ? '🔔' : '🔕'} ${esc(t(following(w) ? 'pr.following' : 'pr.follow'))}</button>
+      <button class="small" data-act="openWatch" data-id="${w.id}">📈 ${esc(t('pr.history'))}</button>
+    </div>
+  </div>`;
+}
+
+function viewPrices() {
+  const back = `<div class="toolbar"><button data-act="tab" data-id="today">‹ ${esc(t('tabs.today'))}</button>
+    <button class="primary" data-act="newWatch">＋ ${esc(t('pr.add'))}</button></div>`;
+  const list = [...S.watches].sort((a, b) => (b.active - a.active) || (following(b) - following(a)) || a.title.localeCompare(b.title));
+  return `${back}
+    <p class="hint">${esc(t('pr.intro'))}</p>
+    ${list.length ? list.map(watchCard).join('') : `<p class="empty">${esc(t('pr.none'))}</p>`}
+    <details class="more"><summary>${esc(t('pr.howTitle'))}</summary><ul class="hist">${t('pr.how').map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details>`;
+}
+
+// On Today: the products I follow, or a way in
+function pricesTeaser() {
+  if (!S.pricesReady) return '';
+  const mine = S.watches.filter((w) => w.active && following(w));
+  if (!mine.length) return `<button class="small" data-act="tab" data-id="prices">🏷️ ${esc(t('pr.title'))}${S.watches.length ? ` (${S.watches.length})` : ''} →</button>`;
+  const rows = mine.slice(0, 4).map((w) => {
+    const st = watchStatus(w);
+    return `<div class="row compact" data-act="openPrices">
+      <div class="body"><div class="ttl">${esc(w.title)}</div><div class="meta">${w.best_shop ? esc(w.best_shop) : esc(t('pr.notYet'))}</div></div>
+      <div class="w-price small"><b>${esc(kr(st.best))}</b>${changeChip(st)}${st.atTarget ? ' 🎯' : ''}</div></div>`;
+  }).join('');
+  return fold('prices', `🏷️ ${esc(t('pr.title'))}`, `<div class="list">${rows}</div>
+    <button class="small" data-act="tab" data-id="prices">${esc(t('pr.all'))} →</button>`, mine.length);
+}
+
+function watchDetail(w) {
+  const st = watchStatus(w);
+  const pts = watchPoints(w.id);
+  const lastDay = pts.length ? pts[pts.length - 1].checked_on : null;
+  const offers = pts.filter((p) => p.checked_on === lastDay)
+    .sort((a, b) => (Number(a.price) + Number(a.shipping || 0)) - (Number(b.price) + Number(b.shipping || 0)));
+  const hist = [...st.days].reverse().slice(0, 60);
+  const shopOn = (d, v) => pts.find((p) => p.checked_on === d && Number(p.price) + Number(p.shipping || 0) === v);
+  openDialog(`<div class="form">
+    <h2>🏷️ ${esc(w.title)}</h2>
+    ${w.details ? `<p class="meta">${esc(w.details)}</p>` : ''}
+    ${w.ref_url ? `<p>${offerLink(w.ref_url, t('pr.product'))}</p>` : ''}
+    ${st.days.length > 1 ? `<div class="w-spark big">${sparkline(st.days)}</div>
+      <p class="meta">${esc(t('pr.range', { lo: kr(st.low), hi: kr(Math.max(...st.days.map(([, v]) => v))), n: st.days.length }))}</p>` : ''}
+    <h3>${esc(t('pr.offers'))}${lastDay ? ` · ${esc(fmtDate(lastDay, getLang()))}` : ''}</h3>
+    ${offers.length ? `<div class="list">${offers.map((p) => `<div class="row compact ${p.in_stock === false ? 'muted' : ''}">
+      <div class="body"><div class="ttl">${esc(p.shop)}${p.used ? ` · ${esc(t('pr.used'))}` : ''}</div>
+        <div class="meta">${p.shipping != null ? esc(Number(p.shipping) ? t('pr.shipping', { price: kr(p.shipping) }) : t('pr.freeShipping')) : esc(t('pr.shippingUnknown'))}
+          ${p.in_stock === false ? ` · ${esc(t('pr.outOfStock'))}` : ''}${p.note ? ` · ${esc(p.note)}` : ''}</div></div>
+      <div class="w-price small"><b>${esc(kr(p.price))}</b> ${offerLink(p.url, t('pr.open'))}</div></div>`).join('')}</div>`
+      : `<p class="empty">${esc(t('pr.notYet'))}</p>`}
+    ${hist.length ? `<h3>${esc(t('pr.history'))}</h3><table class="phist"><tbody>${hist.map(([d, v]) => {
+      const p = shopOn(d, v);
+      return `<tr><td>${esc(fmtDate(d, getLang()))}</td><td><b>${esc(kr(v))}</b></td><td>${p ? offerLink(p.url, p.shop) : ''}</td></tr>`;
+    }).join('')}</tbody></table>` : ''}
+    <div class="btns">
+      ${canEditWatch(w) ? `<button type="button" data-act="editWatch" data-id="${w.id}">✎ ${t('edit')}</button>` : ''}
+      <span class="grow"></span>
+      <button type="button" class="primary" data-act="close">${t('pr.close')}</button>
+    </div></div>`);
+}
+
+function watchForm(w) {
+  const x = w || { title: '', details: '', ref_url: '', target_price: null, allow_used: false, notify: 'daily', visible_to: 'family', active: true };
+  const opt = (name, vals, cur) => `<select name="${name}">${vals.map((v) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${esc(t(`pr.${name}_${v}`))}</option>`).join('')}</select>`;
+  openDialog(`
+    <form id="watchForm" class="form">
+      <h2>🏷️ ${w ? esc(w.title) : esc(t('pr.add'))}</h2>
+      <label>${t('pr.what')}<input name="title" value="${esc(x.title)}" maxlength="120" required placeholder="${esc(t('pr.whatPh'))}"></label>
+      <label>${t('pr.details')}<input name="details" value="${esc(x.details || '')}" maxlength="500" placeholder="${esc(t('pr.detailsPh'))}"></label>
+      <label>${t('pr.link')}<input name="ref_url" type="url" value="${esc(x.ref_url || '')}" maxlength="500" placeholder="https://…"></label>
+      <label>${t('pr.target')}<input name="target_price" type="number" min="1" step="1" inputmode="numeric" value="${x.target_price != null ? Number(x.target_price) : ''}" placeholder="${esc(t('pr.targetPh'))}"></label>
+      <label class="check"><input type="checkbox" name="allow_used" ${x.allow_used ? 'checked' : ''}><span>${t('pr.allowUsed')}</span></label>
+      <label>${t('pr.notifyLbl')}${opt('notify', ['daily', 'drop', 'off'], x.notify)}</label>
+      <label>${t('pr.visibleLbl')}${opt('visible', isParent() ? ['family', 'parents', 'me'] : ['family', 'me'], x.visible_to)}</label>
+      ${w ? `<label class="check"><input type="checkbox" name="active" ${x.active ? 'checked' : ''}><span>${t('pr.active')}</span></label>` : ''}
+      <p class="hint">${esc(t('pr.formHint'))}</p>
+      <div class="btns">
+        ${w ? `<button type="button" class="danger" data-act="delWatch" data-id="${w.id}">${t('delete')}</button>` : ''}
+        <span class="grow"></span>
+        <button type="button" data-act="close">${t('cancel')}</button>
+        <button class="primary" type="submit">${t('save')}</button>
+      </div>
+    </form>`);
+  const form = document.getElementById('watchForm');
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(form);
+    const url = f.get('ref_url').trim();
+    const row = { title: f.get('title').trim(), details: f.get('details').trim() || null, ref_url: url || null,
+      target_price: Number(f.get('target_price')) > 0 ? Number(f.get('target_price')) : null,
+      allow_used: f.get('allow_used') === 'on', notify: f.get('notify'), visible_to: f.get('visible') };
+    if (!row.title) return toast(t('needTitle'), true);
+    if (url && !/^https?:\/\//i.test(url)) return toast(t('pr.badLink'), true);
+    if (w) await run(sb.from('price_watches').update({ ...row, active: f.get('active') === 'on' }).eq('id', w.id));
+    else await run(sb.from('price_watches').insert(row));
+    closeDialog();
+    if (!w) toast(t('pr.added'));
+    await refresh();
+  };
+}
+
 // ------------------------------------------------------------ dialog
 
 function openDialog(html) {
@@ -2981,6 +3164,19 @@ const ACTIONS = {
     if (mode === 'pick' && was === 'off') toast(t('calPickNote'));
     await refresh();
   },
+  openPrices: () => { S.tab = 'prices'; render(); window.scrollTo(0, 0); },
+  newWatch: () => watchForm(null),
+  openWatch: (id) => { const w = byId(S.watches, id); if (w) watchDetail(w); },
+  editWatch: (id) => { const w = byId(S.watches, id); if (w) watchForm(w); },
+  followWatch: async (id) => {
+    const w = byId(S.watches, id);
+    await run(sb.rpc('price_follow', { p_id: id, p_on: !following(w) }));
+    await refresh();
+  },
+  delWatch: async (id) => {
+    if (!confirm(t('confirmDelete'))) return;
+    await run(sb.from('price_watches').delete().eq('id', id)); closeDialog(); await refresh();
+  },
   calView: (id) => { S.calView = id; render(); window.scrollTo(0, 0); },
   findFilter: () => findFilterSheet(),
   findChip: (key) => {
@@ -3083,6 +3279,16 @@ document.addEventListener('visibilitychange', () => {
 
 // ------------------------------------------------------------ start
 
+// ?prices=<id|all> from a price notification opens the price page (and the product)
+function openFromUrl(search) {
+  const id = new URLSearchParams(search).get('prices');
+  if (!id || !S.me || !S.pricesReady) return;
+  S.tab = 'prices';
+  history.replaceState(null, '', location.pathname);
+  const w = byId(S.watches, id);
+  if (w) setTimeout(() => watchDetail(w), 0);
+}
+
 (async function start() {
   const saved = store('hl-lang');
   const nav = (navigator.language || 'da').slice(0, 2);
@@ -3094,6 +3300,7 @@ document.addEventListener('visibilitychange', () => {
   const { data } = await sb.auth.getSession();
   S.session = data.session;
   if (S.session) { try { await loadAll(); landing(); } catch { /* shown */ } }
+  openFromUrl(location.search);
   render();
   ensurePush().then(() => { if (S.pushOn && S.tab === 'family') render(); });
   sb.auth.onAuthStateChange(async (event, session) => {
@@ -3108,5 +3315,11 @@ document.addEventListener('visibilitychange', () => {
     render();
     ensurePush();
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+    // A tapped notification while the app is already open
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      if (e.data?.open && S.me) { openFromUrl(new URL(e.data.open).search); render(); }
+    });
+  }
 })();
