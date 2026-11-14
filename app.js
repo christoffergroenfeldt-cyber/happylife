@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '44'; // keep in step with CACHE in sw.js
+const APP_VERSION = '45'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -2773,8 +2773,9 @@ function schoolLoginBox() {
 // a-Shell (school/aulalogin.py) and the server keeps the session alive after that.
 const ASHELL_URL = 'https://apps.apple.com/app/id1473805438';
 const LOGIN_SCRIPT = 'https://raw.githubusercontent.com/christoffergroenfeldt-cyber/happylife/main/school/aulalogin.py';
-const phoneLoginLine = (token, user) => 'pip install --no-deps aula==0.8.2 && pip install beautifulsoup4 click html2text httpx qrcode tzdata'
-  + ` && curl -L -o aulalogin.py ${LOGIN_SCRIPT} && python3 aulalogin.py ${token} ${user}`;
+// one command (a-Shell has no &&); the script installs what it needs itself
+const phoneLoginLine = (token, user) =>
+  `python3 -c "import urllib.request as u;exec(u.urlopen('${LOGIN_SCRIPT}').read())" ${token} ${user}`;
 
 function phoneLoginGuide(l) {
   const open = l.status !== 'ok';

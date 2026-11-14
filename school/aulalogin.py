@@ -4,10 +4,9 @@ STIL's bot protection stops MitID logins from servers (GitHub), but not from a
 normal Danish home or mobile connection. So the login happens here, once; the
 server keeps the session alive afterwards (token refresh isn't blocked).
 
-In a-Shell (Happy Life → Setup → Skole direkte shows the exact line):
-  pip install --no-deps aula==0.8.2 && pip install beautifulsoup4 click html2text httpx qrcode tzdata
-  curl -L -o aulalogin.py https://raw.githubusercontent.com/christoffergroenfeldt-cyber/happylife/main/school/aulalogin.py
-  python3 aulalogin.py <sync code> <MitID username>
+In a-Shell, one line (Happy Life → Setup → Skole direkte copies it; a-Shell has no &&):
+  python3 -c "import urllib.request as u;exec(u.urlopen('<raw url of this file>').read())" <sync code> <MitID username>
+The first run installs the packages it needs (in-process pip – a-Shell can't start subprocesses).
 
 Approve in the MitID app. If MitID asks for a QR code, it is printed here –
 scan it from another device's screen, or choose "can't scan" in the MitID app
@@ -23,6 +22,27 @@ import types
 import urllib.request
 
 APP = 'https://christoffergroenfeldt-cyber.github.io/happylife/config.js'
+
+def ensure_packages():
+    try:
+        import aula, bs4, click, html2text, httpx, qrcode  # noqa: F401
+        return
+    except ImportError:
+        pass
+    print('Installerer det, der skal bruges (kun første gang, ca. et minut) …')
+    import importlib
+    import site
+    from pip._internal.cli.main import main as pip
+    if pip(['install', '--no-deps', 'aula==0.8.2']) or \
+       pip(['install', 'beautifulsoup4', 'click', 'html2text', 'httpx', 'qrcode', 'tzdata']):
+        sys.exit('✗ Installationen mislykkedes – send et skærmbillede til Claude')
+    for d in [site.getusersitepackages()] + site.getsitepackages():
+        if d not in sys.path:
+            sys.path.append(d)
+    importlib.invalidate_caches()
+
+
+ensure_packages()
 
 # a-Shell can't build the "cryptography" package; MitID only needs AES-GCM encrypt
 try:
@@ -172,7 +192,7 @@ async def check(td):
 
 def main():
     if len(sys.argv) < 3:
-        sys.exit('Brug: python3 aulalogin.py <synkroniseringskode> <MitID-brugernavn>')
+        sys.exit('Mangler synkroniseringskode og MitID-brugernavn – kopiér linjen igen i Happy Life')
     code, username = sys.argv[1].strip(), sys.argv[2].strip()
     url, anon = supabase()
     print('Starter MitID – godkend i MitID-appen …')
