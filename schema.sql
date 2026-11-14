@@ -2265,3 +2265,61 @@ returns void language sql security definer set search_path = public as $$
 $$;
 revoke execute on function school_mark_all_read() from public, anon;
 grant execute on function school_mark_all_read() to authenticated;
+
+-- MinUddannelse via Aula: ugenoter (weekly notes per class) and opgaver (homework/tasks),
+-- this week and next, replaced on every sync. Shown to the parents on I dag (📚 Skole).
+create table if not exists school_items (
+  id         uuid primary key default gen_random_uuid(),
+  family_id  uuid not null references families on delete cascade,
+  user_id    uuid not null references auth.users on delete cascade,
+  kind       text not null check (kind in ('ugenote','opgave')),
+  ext_id     text not null,
+  week       text not null,               -- e.g. 2026-W46
+  child      text,                        -- first name
+  grp        text,                        -- class / team, e.g. "4.B"
+  subject    text,
+  title      text not null default '',
+  body       text,
+  due_date   date,
+  done       boolean not null default false,
+  url        text,
+  updated_at timestamptz not null default now(),
+  unique (user_id, kind, ext_id, week)
+);
+create index if not exists school_items_family on school_items(family_id, week);
+alter table school_items enable row level security;
+drop policy if exists si_select on school_items;
+create policy si_select on school_items for select using (family_id = my_family() and i_am_parent());
+revoke all on school_items from anon, authenticated;
+grant select on school_items to authenticated;
+
+create or replace function school_items_put(p_key text, p_user uuid, p_weeks text[], p_items jsonb)
+returns int language plpgsql security definer set search_path = public as $$
+declare fam uuid; n int;
+begin
+  if not server_key_ok(p_key) then raise exception 'bad key'; end if;
+  select family_id into fam from school_links where user_id = p_user;
+  if fam is null then raise exception 'no link'; end if;
+  delete from school_items where user_id = p_user and week = any(p_weeks);
+  insert into school_items(family_id, user_id, kind, ext_id, week, child, grp, subject, title, body, due_date, done, url)
+  select fam, p_user, x->>'kind', left(x->>'ext_id', 100), left(x->>'week', 10), left(x->>'child', 60),
+         left(x->>'grp', 100), left(x->>'subject', 100), left(coalesce(x->>'title', ''), 300),
+         left(x->>'body', 30000), (x->>'due_date')::date, coalesce((x->>'done')::boolean, false),
+         case when x->>'url' ~* '^https://' then left(x->>'url', 1000) end
+    from jsonb_array_elements(coalesce(p_items, '[]'::jsonb)) x
+   where x->>'kind' in ('ugenote','opgave') and coalesce(x->>'ext_id', '') <> '' and x->>'week' = any(p_weeks)
+  on conflict (user_id, kind, ext_id, week) do nothing;
+  get diagnostics n = row_count;
+  delete from school_items where user_id = p_user and updated_at < now() - interval '21 days';
+  return n;
+end $$;
+revoke execute on function school_items_put(text, uuid, text[], jsonb) from public, anon, authenticated;
+grant execute on function school_items_put(text, uuid, text[], jsonb) to anon;
+
+create or replace function school_link_remove()
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  delete from school_items where user_id = auth.uid();
+  delete from school_messages where user_id = auth.uid();
+  delete from school_links where user_id = auth.uid();
+end $$;

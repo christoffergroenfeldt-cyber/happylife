@@ -183,46 +183,61 @@ def patch_models():
         cls._hl_patched = True
 
 
-async def aula_probe(client, profile):
-    """Which add-ons (widgets) Aula offers this family, and whether the ones we
-    may use answer (counts only, this week) – stored in school_links.aula_widgets."""
-    out = {'widgets': [], 'probe': {}}
+async def aula_minuddannelse(client, profile):
+    """Which add-ons (widgets) Aula offers the family (kept in school_links.aula_widgets),
+    and from MinUddannelse – if the school has it – ugenoter and opgaver for this
+    week and next. Returns (info, weeks, items)."""
+    from aula.utils.html import html_to_plain
+    info = {'widgets': [], 'fetched': {}}
     try:
         for w in await client.get_widgets():
-            out['widgets'].append({'id': w.widget_id, 'name': w.name, 'supplier': w.widget_supplier})
+            info['widgets'].append({'id': w.widget_id, 'name': w.name, 'supplier': w.widget_supplier})
     except Exception as e:
-        out['error'] = type(e).__name__
-        return out
-    ids = {w['id'] for w in out['widgets']}
+        info['error'] = type(e).__name__
+        return info, [], []
+    ids = {w['id'] for w in info['widgets']}
     kids = [str(c._raw['userId']) for c in profile.children if c._raw and 'userId' in c._raw]
     insts = sorted({str((c._raw or {}).get('institutionProfile', {}).get('institutionCode', ''))
                     for c in profile.children} - {''})
-    try:
-        session_uuid = (await client.get_profile_context())['data']['userId']
-    except Exception as e:
-        out['probe']['context'] = type(e).__name__
-        return out
-    y, wk, _ = date.today().isocalendar()
-    week = f'{y}-W{wk}'
-    W = client.widgets
-    tries = {
-        '0029 MU ugebrev': lambda: W.get_ugeplan('0029', kids, insts, week, session_uuid),
-        '0030 MU opgaver': lambda: W.get_mu_tasks('0030', kids, insts, week, session_uuid),
-        '0062 Momo huskeliste': lambda: W.get_momo_reminders(kids, insts, session_uuid, date.today().isoformat(),
-                                                             (date.today() + timedelta(days=14)).isoformat()),
-        '0004 Meebook ugeplan': lambda: W.get_meebook_weekplan(kids, insts, week, session_uuid),
-        '0001 EasyIQ ugeplan': lambda: W.get_easyiq_weekplan(week, session_uuid, insts, kids[0]),
-        '0142 EasyIQ lektier': lambda: W.get_easyiq_homework(week, session_uuid, insts, kids[0]),
-    }
-    for name, fn in tries.items():
-        if name[:4] not in ids or not kids:
-            continue
-        try:
-            res = await fn()
-            out['probe'][name] = len(res) if isinstance(res, list) else 'ok'
-        except Exception as e:
-            out['probe'][name] = f'{type(e).__name__}: {str(e)[:80]}'
-    return out
+    if not kids or not ids & {'0029', '0030'}:
+        return info, [], []
+    session_uuid = (await client.get_profile_context())['data']['userId']
+    today = date.today()
+    weeks = []
+    for d in (today, today + timedelta(days=7)):
+        y, wk, _ = d.isocalendar()
+        weeks.append(f'{y}-W{wk:02d}')
+    items = []
+    for week in weeks:
+        mu_week = f'{week[:4]}-W{int(week[6:])}'   # MinUddannelse wants no leading zero
+        if '0029' in ids:
+            try:
+                for person in await client.widgets.get_ugeplan('0029', kids, insts, mu_week, session_uuid):
+                    for inst in person.institutions:
+                        for letter in inst.letters:
+                            text = html_to_plain(letter.content_html or '').strip()
+                            if not text:
+                                continue
+                            items.append({'kind': 'ugenote', 'week': week, 'child': first_name(person.name),
+                                          'ext_id': f'{person.id}-{letter.group_id}', 'grp': letter.group_name,
+                                          'title': letter.group_name or 'Ugenote', 'body': text[:30000]})
+                info['fetched'][f'ugenoter {week}'] = 'ok'
+            except Exception as e:
+                info['fetched'][f'ugenoter {week}'] = type(e).__name__
+        if '0030' in ids:
+            try:
+                for tk in await client.widgets.get_mu_tasks('0030', kids, insts, mu_week, session_uuid):
+                    subject = (tk.course.name if tk.course else '') or \
+                              (tk.classes[0].subject_name if tk.classes else '') or ''
+                    items.append({'kind': 'opgave', 'week': week, 'child': first_name(tk.student_name),
+                                  'ext_id': str(tk.id), 'grp': tk.classes[0].name if tk.classes else None,
+                                  'subject': subject, 'title': clean_title(tk.title) or 'Opgave',
+                                  'due_date': tk.due_date.astimezone(CPH).date().isoformat() if tk.due_date else None,
+                                  'done': bool(tk.is_completed), 'url': tk.url or None})
+                info['fetched'][f'opgaver {week}'] = 'ok'
+            except Exception as e:
+                info['fetched'][f'opgaver {week}'] = type(e).__name__
+    return info, weeks, items
 
 
 async def aula_fetch(client):
@@ -232,7 +247,10 @@ async def aula_fetch(client):
     kids = {c.id: first_name(c.name) for c in profile.children}
     ids = list(kids)
     rows = []
-    probe = await aula_probe(client, profile)
+    try:
+        AULA_EXTRA['mu'] = await aula_minuddannelse(client, profile)
+    except Exception as e:
+        print(f'minuddannelse: {type(e).__name__}', file=sys.stderr)
     start = datetime.now(CPH).replace(hour=0, minute=0, second=0, microsecond=0)
     end_all = start + timedelta(days=DAYS_AHEAD)
     while start < end_all and ids:
@@ -264,7 +282,6 @@ async def aula_fetch(client):
     except Exception as e:
         print(f'messages: {type(e).__name__}', file=sys.stderr)
         threads = []
-    AULA_EXTRA['widgets'] = probe
     cutoff = datetime.now(timezone.utc) - timedelta(days=60)
     for th in threads[:25]:
         raw = th._raw or {}
@@ -367,7 +384,17 @@ async def do_job(db, http, job):
                 client = await aula_client(db, job, td)
                 async with client:
                     rows_a, items = await aula_fetch(client)
-                await db.update(user, aula_widgets=AULA_EXTRA.pop('widgets', None))
+                mu = AULA_EXTRA.pop('mu', None)
+                if mu:
+                    info, weeks, mu_items = mu
+                    await db.update(user, aula_widgets=info)
+                    # only weeks where everything answered are replaced
+                    ok = [w for w in weeks if all(v == 'ok' for k, v in info['fetched'].items() if k.endswith(w))]
+                    if ok:
+                        await db.rpc('school_items_put', {'p_key': KEY, 'p_user': user, 'p_weeks': ok,
+                                                          'p_items': [i for i in mu_items if i['week'] in ok]})
+                        notes.append(f'MinUddannelse: {sum(i["kind"] == "ugenote" for i in mu_items)} ugenoter, '
+                                     f'{sum(i["kind"] == "opgave" for i in mu_items)} opgaver')
                 rows += rows_a
                 aula_ok = True
                 notes.append(f'Aula: {len(rows_a)} i kalenderen, {len(items)} beskeder/opslag')

@@ -103,6 +103,19 @@ test('read / unread is per app user', async () => {
   assert.equal((await as(DAD, 'select * from school_reads')).length, 0);
 });
 
+test('ugenoter and opgaver: replaced per week, parents only', async () => {
+  const items = [
+    { kind: 'ugenote', ext_id: '1-7-2026-W46', week: '2026-W46', child: 'Victor', grp: '4.B', title: 'Ugenote 4.B', body: 'Husk idrætstøj' },
+    { kind: 'opgave', ext_id: 'a1', week: '2026-W46', child: 'Victor', subject: 'Dansk', title: 'Læs kap. 3', due_date: '2026-11-17', url: 'https://www.minuddannelse.net/x' },
+    { kind: 'opgave', ext_id: 'bad', week: '2025-W01', title: 'wrong week' },
+  ];
+  assert.equal((await job('select school_items_put($1, $2, $3, $4) n', [KEY, DAD, ['2026-W46', '2026-W47'], JSON.stringify(items)]))[0].n, 2);
+  assert.equal((await as(MOM, 'select * from school_items')).length, 2);
+  assert.equal((await as(KID, 'select * from school_items')).length, 0);
+  await job('select school_items_put($1, $2, $3, $4)', [KEY, DAD, ['2026-W46'], JSON.stringify(items.slice(1, 2))]);
+  assert.deepEqual((await as(DAD, 'select kind from school_items')).map((r) => r.kind), ['opgave']);
+});
+
 test('the job brings calendars in through sync_calendar with the parent sync token', async () => {
   const tok = (await job('select * from school_jobs($1)', [KEY]))[0].sync_token;
   const m = (await job(`select sync_calendar($1, 'Motionsdag', '2026-12-02T00:00:00+01:00', '2026-12-03T00:00:00+01:00', 'Yes', 'Aula – Carl') as m`, [tok]))[0].m;
