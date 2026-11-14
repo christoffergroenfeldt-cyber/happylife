@@ -248,8 +248,29 @@ async def login(username):
         return _build_token_data(username, ac.tokens, dict(ac.cookies))
 
 
+def patch_models():
+    """aula 0.8.2 crashes when Aula sends null for some nested objects (e.g. a child
+    without a profile picture): give those keys an empty object instead."""
+    from aula.models.child import Child
+    from aula.models.post import Post
+    from aula.models.profile_reference import ProfileReference
+    keys = ('profilePicture', 'institutionProfile', 'institution', 'content')
+    for cls in (Child, Post, ProfileReference):
+        if getattr(cls, '_hl_patched', False):
+            continue
+        orig = cls.from_dict
+
+        def from_dict(c, data, *a, _orig=orig, **k):
+            if isinstance(data, dict) and any(data.get(x, 0) is None for x in keys):
+                data = {**data, **{x: {} for x in keys if x in data and data[x] is None}}
+            return _orig(data, *a, **k)
+        cls.from_dict = classmethod(from_dict)
+        cls._hl_patched = True
+
+
 async def check(td):
     from aula.auth_flow import create_client
+    patch_models()
     client = await create_client(td)
     async with client:
         profile = await client.get_profile()
@@ -263,10 +284,13 @@ def main():
     url, anon = supabase()
     print('Starter MitID – godkend i MitID-appen …')
     td = asyncio.run(login(username))
-    kids = asyncio.run(check(td))
-    print(f'✓ Logget ind på Aula ({kids} børn)')
+    print('✓ Logget ind på Aula')
     rpc(url, anon, 'school_session_import', {'p_token': code, 'p_username': username, 'p_session': td})
     print('✓ Sendt til Happy Life. Serveren henter fra Aula inden for ca. 10 minutter.')
+    try:
+        print(f'  (Aula svarer: {asyncio.run(check(td))} børn)')
+    except Exception as e:   # only a check – the login is already sent
+        print(f'  (Kunne ikke tjekke profilen: {type(e).__name__} – det gør ikke noget)')
 
 
 if __name__ == '__main__':
