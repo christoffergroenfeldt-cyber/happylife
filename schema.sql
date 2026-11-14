@@ -2283,6 +2283,7 @@ create table if not exists school_items (
   due_date   date,
   done       boolean not null default false,
   url        text,
+  otype      text,
   updated_at timestamptz not null default now(),
   unique (user_id, kind, ext_id, week)
 );
@@ -2301,11 +2302,11 @@ begin
   select family_id into fam from school_links where user_id = p_user;
   if fam is null then raise exception 'no link'; end if;
   delete from school_items where user_id = p_user and week = any(p_weeks);
-  insert into school_items(family_id, user_id, kind, ext_id, week, child, grp, subject, title, body, due_date, done, url)
+  insert into school_items(family_id, user_id, kind, ext_id, week, child, grp, subject, title, body, due_date, done, url, otype)
   select fam, p_user, x->>'kind', left(x->>'ext_id', 100), left(x->>'week', 10), left(x->>'child', 60),
          left(x->>'grp', 100), left(x->>'subject', 100), left(coalesce(x->>'title', ''), 300),
          left(x->>'body', 30000), (x->>'due_date')::date, coalesce((x->>'done')::boolean, false),
-         case when x->>'url' ~* '^https://' then left(x->>'url', 1000) end
+         case when x->>'url' ~* '^https://' then left(x->>'url', 1000) end, left(x->>'otype', 60)
     from jsonb_array_elements(coalesce(p_items, '[]'::jsonb)) x
    where x->>'kind' in ('ugenote','opgave') and coalesce(x->>'ext_id', '') <> '' and x->>'week' = any(p_weeks)
   on conflict (user_id, kind, ext_id, week) do nothing;
@@ -2323,3 +2324,6 @@ begin
   delete from school_messages where user_id = auth.uid();
   delete from school_links where user_id = auth.uid();
 end $$;
+
+-- MinUddannelse task type (e.g. SimpelLektie) and the teacher's text (body, fetched via minuddannelse.net)
+alter table school_items add column if not exists otype text;

@@ -183,6 +183,89 @@ def patch_models():
         cls._hl_patched = True
 
 
+MU_REDIRECT = 'https://api.minuddannelse.net/aula/redirect/'
+MU_WEB_OPGAVER = 'https://www.minuddannelse.net/api/forloebsafvikling/opgaver/getOpgaveliste'
+
+
+def mu_elev_id(url):
+    """The MinUddannelse person id inside an opgave link (base64 of the URL-encoded
+    target www.minuddannelse.net/Node/minuge/<elevId>?opgave=…)."""
+    import urllib.parse
+    if not (url or '').startswith(MU_REDIRECT):
+        return None
+    seg = url.split('?')[0].rstrip('/').split('/')[-1]
+    try:
+        target = urllib.parse.unquote(base64.b64decode(seg + '=' * (-len(seg) % 4)).decode())
+    except Exception:
+        return None
+    m = re.search(r'/minuge/(\d+)', target)
+    return m.group(1) if m else None
+
+
+async def mu_descriptions(client, tasks, kids, session_uuid, weeks):
+    """The teachers' own text for the opgaver ({task id: text}). The Aula widget only
+    sends titles; the opgave link is traded (widget token) for a minuddannelse.net
+    session, whose web API has the text. Best effort: {} on any trouble."""
+    import httpx
+    from aula.utils.html import html_to_plain
+    norm = lambda i: str(i).replace('-', '').lower()
+    login = next((t.url for t in tasks if (t.url or '').startswith(MU_REDIRECT)), None)
+    elevs = {e for e in (mu_elev_id(t.url) for t in tasks) if e}
+    out = {}
+    if not login or not elevs:
+        return out
+    ua = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36'}
+    async with httpx.AsyncClient(timeout=30, follow_redirects=False, headers=ua) as web:
+        async def fetch(elev, week):
+            r = await web.get(MU_WEB_OPGAVER, params={'tidspunkt': week, 'elevId': elev},
+                              headers={'Accept': 'application/json; charset=utf-8', 'X-Requested-With': 'XMLHttpRequest'})
+            if r.status_code in (401, 403) or (r.status_code == 200 and not r.text.lstrip().startswith('{')):
+                return None
+            r.raise_for_status()
+            return r.json()
+
+        async def open_session():
+            token = await client.widgets._get_bearer_token('0030')
+            r = await web.get(login, params={'assuranceLevel': '2', 'childFilter': ','.join(kids), 'isMobileApp': 'false',
+                                             'placement': 'narrow', 'sessionUUID': session_uuid, 'userProfile': 'guardian'},
+                              headers={'Authorization': token})
+            url = login
+            for _ in range(6):
+                if not (300 <= r.status_code < 400) or not r.headers.get('location'):
+                    break
+                url = str(httpx.URL(url).join(r.headers['location']))
+                r = await web.get(url)
+            if r.status_code != 200:
+                raise RuntimeError(f'minuddannelse login {r.status_code}')
+
+        opened = False
+        for week in weeks:
+            for elev in elevs:
+                try:
+                    data = await fetch(elev, week)
+                    if data is None and not opened:
+                        opened = True
+                        await open_session()
+                        data = await fetch(elev, week)
+                except Exception:
+                    data = None
+                for w in (data or {}).get('opgaver') or []:
+                    raw = w.get('indhold')
+                    if not w.get('id') or not raw:
+                        continue
+                    html = raw
+                    try:
+                        j = json.loads(raw)
+                        if isinstance(j, dict) and isinstance(j.get('text'), str):
+                            html = j['text']
+                    except ValueError:
+                        pass
+                    text = html_to_plain(html).strip()
+                    if text:
+                        out[norm(w['id'])] = text[:30000]
+    return out
+
+
 async def aula_minuddannelse(client, profile):
     """Which add-ons (widgets) Aula offers the family (kept in school_links.aula_widgets),
     and from MinUddannelse – if the school has it – ugenoter and opgaver for this
@@ -208,6 +291,7 @@ async def aula_minuddannelse(client, profile):
         y, wk, _ = d.isocalendar()
         weeks.append(f'{y}-W{wk:02d}')
     items = []
+    all_tasks = []
     for week in weeks:
         mu_week = f'{week[:4]}-W{int(week[6:])}'   # MinUddannelse wants no leading zero
         if '0029' in ids:
@@ -229,6 +313,7 @@ async def aula_minuddannelse(client, profile):
                 tasks = await client.widgets.get_mu_tasks('0030', kids, insts, mu_week, session_uuid)
                 if tasks and tasks[0]._raw:   # field names only (no content), to see what MinUddannelse sends
                     info['opgave_fields'] = {k: type(v).__name__ for k, v in tasks[0]._raw.items()}
+                all_tasks += tasks
                 for tk in tasks:
                     subject = (tk.course.name if tk.course else '') or \
                               (tk.classes[0].subject_name if tk.classes else '') or ''
@@ -236,10 +321,20 @@ async def aula_minuddannelse(client, profile):
                                   'ext_id': str(tk.id), 'grp': tk.classes[0].name if tk.classes else None,
                                   'subject': subject, 'title': clean_title(tk.title) or 'Opgave',
                                   'due_date': tk.due_date.astimezone(CPH).date().isoformat() if tk.due_date else None,
-                                  'done': bool(tk.is_completed), 'url': tk.url or None})
+                                  'done': bool(tk.is_completed), 'url': tk.url or None, 'otype': tk.task_type or None})
                 info['fetched'][f'opgaver {week}'] = 'ok'
             except Exception as e:
                 info['fetched'][f'opgaver {week}'] = type(e).__name__
+    if all_tasks:
+        try:
+            desc = await mu_descriptions(client, all_tasks, kids, session_uuid, weeks)
+        except Exception as e:
+            desc = {}
+            info['fetched']['beskrivelser'] = type(e).__name__
+        info['fetched'].setdefault('beskrivelser', f'{len(desc)}')
+        for it in items:
+            if it['kind'] == 'opgave':
+                it['body'] = desc.get(it['ext_id'].replace('-', '').lower())
     return info, weeks, items
 
 
