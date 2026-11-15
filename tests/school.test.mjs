@@ -132,6 +132,23 @@ test('lektieliste: Claude\'s list replaces the old one, check marks survive', as
   await assert.rejects(as(KID, 'select school_homework_done($1, true)', [rows[1].id]), /not found/);
 });
 
+test('ForældreIntra (Chrome task) and the Aula sync keep to their own rows', async () => {
+  const wk = '2026-W47';
+  await job('select school_items_put($1, $2, $3, $4)', [KEY, DAD, [wk], JSON.stringify([{ kind: 'opgave', ext_id: 'aula1', week: wk, child: 'Victor', title: 'Aula' }])]);
+  await assert.rejects(job(`select skoleintra_save($1, '{2026-W47}', '[]', '[]')`, [DAD]), /permission denied/);
+  const r = await q(`select skoleintra_save($1, '{2026-W47}', $2, $3) r`, [DAD,
+    JSON.stringify([{ kind: 'opgave', ext_id: 'si-1', week: wk, child: 'Carl', subject: 'Historie', title: 'Lektie: Læs s. 50-55', due_date: '2026-11-17' }]),
+    JSON.stringify([{ child: 'Carl', due_date: '2026-11-17', kind: 'lektie', text: 'Læs s. 50-55 i Historie 7' }])]);
+  assert.match(r[0].r, /1 i ugeplanen, 1 på lektielisten/);
+  // the Aula sync runs again: Carl's rows stay
+  await job('select school_items_put($1, $2, $3, $4)', [KEY, DAD, [wk], '[]']);
+  await job('select school_homework_put($1, $2, $3, $4)', [KEY, DAD, 'h9', '[]']);
+  assert.deepEqual((await as(MOM, `select child from school_items where week = '2026-W47'`)).map((x) => x.child), ['Carl']);
+  assert.ok((await as(MOM, `select 1 from school_homework where child = 'Carl'`)).length);
+  await q(`select skoleintra_save($1, '{2026-W47}', '[]', '[]')`, [DAD]);
+  assert.equal((await as(MOM, `select 1 from school_homework where child = 'Carl'`)).length, 0);
+});
+
 test('the job brings calendars in through sync_calendar with the parent sync token', async () => {
   const tok = (await job('select * from school_jobs($1)', [KEY]))[0].sync_token;
   const m = (await job(`select sync_calendar($1, 'Motionsdag', '2026-12-02T00:00:00+01:00', '2026-12-03T00:00:00+01:00', 'Yes', 'Aula – Carl') as m`, [tok]))[0].m;

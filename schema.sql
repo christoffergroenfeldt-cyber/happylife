@@ -2301,7 +2301,7 @@ begin
   if not server_key_ok(p_key) then raise exception 'bad key'; end if;
   select family_id into fam from school_links where user_id = p_user;
   if fam is null then raise exception 'no link'; end if;
-  delete from school_items where user_id = p_user and week = any(p_weeks);
+  delete from school_items where user_id = p_user and week = any(p_weeks) and src = 'aula';
   insert into school_items(family_id, user_id, kind, ext_id, week, child, grp, subject, title, body, due_date, done, url, otype)
   select fam, p_user, x->>'kind', left(x->>'ext_id', 100), left(x->>'week', 10), left(x->>'child', 60),
          left(x->>'grp', 100), left(x->>'subject', 100), left(coalesce(x->>'title', ''), 300),
@@ -2392,7 +2392,7 @@ begin
     from jsonb_array_elements(coalesce(p_items, '[]'::jsonb)) x
    where x->>'kind' in ('lektie','husk') and char_length(btrim(coalesce(x->>'text', ''))) > 0;
   select array_agg(key) into keys from hw;
-  delete from school_homework h where h.user_id = p_user and not h.done and h.key <> all(coalesce(keys, '{}'));
+  delete from school_homework h where h.user_id = p_user and h.src = 'aula' and not h.done and h.key <> all(coalesce(keys, '{}'));
   insert into school_homework(family_id, user_id, key, child, due_date, kind, text, subject, source)
   select distinct on (key) fam, p_user, key, child, due_date, kind, text, subject, source from hw
   on conflict (user_id, key) do update set child = excluded.child, due_date = excluded.due_date, kind = excluded.kind,
@@ -2444,3 +2444,50 @@ end $$;
 revoke execute on function school_sync_dispatch() from public, anon, authenticated;
 -- Run once in the SQL editor (needs pg_cron, pg_net and the Vault secret):
 --   select cron.schedule('happylife-school-sync', '*/10 * * * *', 'select public.school_sync_dispatch()');
+
+
+-- ForældreIntra (SkoleIntra) has no API and its parent login is MitID, so a scheduled Claude task reads
+-- the ugeplan in the parent's own logged-in Chrome and saves it here (school/skoleintra-task.md).
+-- src keeps it apart from the Aula sync, which only replaces its own rows.
+alter table school_items add column if not exists src text not null default 'aula';
+alter table school_homework add column if not exists src text not null default 'aula';
+
+-- Called by that task (database owner only): replaces the weeks' items and the lektieliste for src
+-- 'skoleintra'. p_items like school_items_put, p_homework like school_homework_put.
+create or replace function skoleintra_save(p_user uuid, p_weeks text[], p_items jsonb, p_homework jsonb)
+returns text language plpgsql security definer set search_path = public as $$
+declare fam uuid; n_items int; n_hw int; keys text[];
+begin
+  select family_id into fam from members where user_id = p_user and roles && array['mother','father'];
+  if fam is null then raise exception 'not a parent'; end if;
+  delete from school_items where user_id = p_user and src = 'skoleintra' and week = any(p_weeks);
+  insert into school_items(family_id, user_id, src, kind, ext_id, week, child, grp, subject, title, body, due_date, url)
+  select fam, p_user, 'skoleintra', x->>'kind', left(x->>'ext_id', 100), left(x->>'week', 10), left(x->>'child', 60),
+         left(x->>'grp', 100), left(x->>'subject', 100), left(coalesce(x->>'title', ''), 300), left(x->>'body', 30000),
+         case when x->>'due_date' ~ '^\d{4}-\d{2}-\d{2}$' then (x->>'due_date')::date end,
+         case when x->>'url' ~* '^https://' then left(x->>'url', 1000) end
+    from jsonb_array_elements(coalesce(p_items, '[]'::jsonb)) x
+   where x->>'kind' in ('ugenote','opgave') and coalesce(x->>'ext_id', '') <> '' and x->>'week' = any(p_weeks)
+  on conflict (user_id, kind, ext_id, week) do nothing;
+  get diagnostics n_items = row_count;
+
+  create temp table hw on commit drop as
+  select md5(lower(coalesce(x->>'child', '')) || '|' || coalesce(x->>'due_date', '') || '|' ||
+             lower(regexp_replace(coalesce(x->>'text', ''), '\s+', ' ', 'g'))) as key,
+         left(x->>'child', 60) as child,
+         case when x->>'due_date' ~ '^\d{4}-\d{2}-\d{2}$' then (x->>'due_date')::date end as due_date,
+         x->>'kind' as kind, left(btrim(x->>'text'), 500) as text, left(x->>'subject', 100) as subject,
+         left(x->>'source', 100) as source
+    from jsonb_array_elements(coalesce(p_homework, '[]'::jsonb)) x
+   where x->>'kind' in ('lektie','husk') and char_length(btrim(coalesce(x->>'text', ''))) > 0;
+  select array_agg(key) into keys from hw;
+  delete from school_homework h where h.user_id = p_user and h.src = 'skoleintra' and not h.done
+     and h.key <> all(coalesce(keys, '{}'));
+  insert into school_homework(family_id, user_id, src, key, child, due_date, kind, text, subject, source)
+  select distinct on (key) fam, p_user, 'skoleintra', key, child, due_date, kind, text, subject, source from hw
+  on conflict (user_id, key) do update set child = excluded.child, due_date = excluded.due_date, kind = excluded.kind,
+         text = excluded.text, subject = excluded.subject, source = excluded.source, src = excluded.src;
+  get diagnostics n_hw = row_count;
+  return format('%s i ugeplanen, %s på lektielisten', n_items, n_hw);
+end $$;
+revoke execute on function skoleintra_save(uuid, text[], jsonb, jsonb) from public, anon, authenticated;
