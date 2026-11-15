@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '50'; // keep in step with CACHE in sw.js
+const APP_VERSION = '51'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -2903,11 +2903,24 @@ function isoWeekOf(iso) {
 const weekdayName = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString(
   { da: 'da-DK', en: 'en-GB', fr: 'fr-FR' }[getLang()], { weekday: 'long' });
 
+// Tap: the teacher's own text (fetched by the sync), so no MinUddannelse/ForældreIntra login is needed
 function schoolItemRow(x) {
-  const body = `<div class="body"><div class="ttl">${esc(x.title)}</div>
-    <div class="meta">${esc(x.subject || x.grp || '')}${x.done ? ' · ✓' : ''}</div></div>`;
-  return x.url ? `<a class="row school-item" href="${esc(x.url)}" target="_blank" rel="noopener">${body}<span class="go">↗</span></a>`
-    : `<div class="row school-item">${body}</div>`;
+  const preview = (x.body || '').replace(/\s+/g, ' ').trim();
+  return `<button type="button" class="row school-item" data-act="scItem" data-id="${x.id}">
+    <span class="body"><span class="ttl">${esc(x.title)}</span>
+      <span class="meta">${esc(x.subject || x.grp || '')}${x.done ? ' · ✓' : ''}</span>
+      ${preview ? `<span class="preview">${esc(preview.slice(0, 140))}${preview.length > 140 ? '…' : ''}</span>` : ''}</span>
+    <span class="go">›</span></button>`;
+}
+
+function schoolItemDialog(x) {
+  const src = x.src === 'skoleintra' ? 'ForældreIntra' : 'MinUddannelse';
+  openDialog(`<div class="form school-read">
+    <h2>${esc(x.title)}</h2>
+    <p class="meta">${esc(x.child || '')}${x.subject ? ` · ${esc(x.subject)}` : ''}${x.due_date ? ` · ${esc(weekdayName(x.due_date))} ${esc(fmtDate(x.due_date, getLang()))}` : ''}</p>
+    <div class="msg-body">${x.body ? esc(x.body).replace(/\n/g, '<br>') : `<p class="empty">${esc(t('sc.noText'))}</p>`}</div>
+    <div class="btns">${x.url ? `<a class="link" href="${esc(x.url)}" target="_blank" rel="noopener">${esc(t('sc.openIn', { src }))} ↗</a>` : ''}
+      <span class="grow"></span><button type="button" data-act="close">${esc(t('sc.close'))}</button></div></div>`);
 }
 
 function schoolByChild(items) {
@@ -3503,6 +3516,7 @@ const ACTIONS = {
   },
   scOnlyUnread: (id) => { S.schoolUnreadOnly = !!id; render(); },
   scWeek: (week) => schoolWeekDialog(week),
+  scItem: (id) => { const x = byId(S.schoolItems, id); if (x) schoolItemDialog(x); },
   hwToggle: async (id) => {
     const h = byId(S.homework, id);
     if (!h) return;
