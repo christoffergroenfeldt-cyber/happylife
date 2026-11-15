@@ -355,7 +355,9 @@ async def aula_fetch(client):
         AULA_EXTRA['mu'] = await aula_minuddannelse(client, profile)
     except Exception as e:
         print(f'minuddannelse: {type(e).__name__}', file=sys.stderr)
+    # from Monday of this week, so the week's earlier days stay in the timetable (Skema)
     start = datetime.now(CPH).replace(hour=0, minute=0, second=0, microsecond=0)
+    start -= timedelta(days=start.weekday())
     end_all = start + timedelta(days=DAYS_AHEAD)
     while start < end_all and ids:
         end = min(start + timedelta(days=30), end_all)
@@ -430,9 +432,9 @@ async def feed_rows(http, feed):
     r = await http.get(url, follow_redirects=True, timeout=60)
     r.raise_for_status()
     cal = icalendar.Calendar.from_ical(r.content)
-    today = date.today()
+    monday = date.today() - timedelta(days=date.today().weekday())   # the whole current week (Skema)
     rows = []
-    for ev in recurring_ical_events.of(cal).between(today, today + timedelta(days=DAYS_AHEAD)):
+    for ev in recurring_ical_events.of(cal).between(monday, monday + timedelta(days=DAYS_AHEAD)):
         title = clean_title(ev.get('SUMMARY'))
         if not title or str(ev.get('STATUS', '')).upper() == 'CANCELLED':
             continue

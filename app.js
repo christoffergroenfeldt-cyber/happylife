@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '51'; // keep in step with CACHE in sw.js
+const APP_VERSION = '52'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -975,11 +975,14 @@ function skemaSetupSection() {
         return `<button class="hchip ${off ? 'hidden-subj' : 'on'}" data-act="skemaHide" data-id="${esc(x)}" aria-pressed="${!off}">${off ? '🚫 ' : ''}${esc(x)} <small>${n(x)}</small></button>`; }).join('')}</div></div>`;
 }
 
+// The week the Skema opens on: this week, or the coming one on a weekend
+const skemaThisWeek = () => { const td = today(); return weekStart(new Date(td + 'T12:00:00').getDay() % 6 === 0 ? addDays(td, 2) : td); };
+
 function viewSkema() {
   const kids = skemaKids();
   if (!S.skemaWho || !kids.includes(S.skemaWho)) S.skemaWho = kids[0] || null;
   const td = today();
-  const ws = S.skemaWeek || weekStart(td);
+  const ws = S.skemaWeek || skemaThisWeek();
   const days = [0, 1, 2, 3, 4, 5, 6].map((i) => addDays(ws, i));
   const cols = days.map((d) => ({ d, list: lessonsOn(d, S.skemaWho) }))
     .filter((c, i) => i < 5 || c.list.length);
@@ -991,7 +994,7 @@ function viewSkema() {
     <div class="sk-nav"><button class="icon" data-act="skemaWeek" data-id="-7" aria-label="‹">‹</button>
       <b>${esc(t('sk.week', { n: isoWeek(ws) }))}</b> <span class="meta">${esc(fmtDay(ws, { day: 'numeric', month: 'short' }))} – ${esc(fmtDay(addDays(ws, 4), { day: 'numeric', month: 'short' }))}</span>
       <button class="icon" data-act="skemaWeek" data-id="7" aria-label="›">›</button>
-      ${ws !== weekStart(td) ? `<button class="small" data-act="skemaWeek" data-id="0">${esc(t('td.today'))}</button>` : ''}</div>
+      ${ws !== skemaThisWeek() ? `<button class="small" data-act="skemaWeek" data-id="0">${esc(t('td.today'))}</button>` : ''}</div>
     <div class="sk-grid" style="grid-template-columns:repeat(${cols.length},1fr)">${cols.map(({ d, list }) => `
       <div class="sk-col ${d === td ? 'today' : ''} ${d === sel ? 'sel' : ''}">
         <div class="sk-day">${esc(fmtDay(d, { weekday: 'short' }))}<small>${esc(fmtDay(d, { day: 'numeric' }))}</small></div>
@@ -3407,7 +3410,7 @@ const ACTIONS = {
     else await run(sb.from('skema_hidden').insert({ title: key }));
     await refresh();
   },
-  skemaWeek: (n) => { S.skemaWeek = Number(n) ? addDays(S.skemaWeek || weekStart(today()), Number(n)) : weekStart(today()); S.skemaDay = null; render(); },
+  skemaWeek: (n) => { S.skemaWeek = Number(n) ? addDays(S.skemaWeek || skemaThisWeek(), Number(n)) : skemaThisWeek(); S.skemaDay = null; render(); },
   calSchedule: async (id) => {
     const c = byId(S.calendars, id);
     await run(sb.rpc('set_calendar_schedule', { p_id: id, p_on: !c.schedule }));
