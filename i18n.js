@@ -37,7 +37,7 @@ const STRINGS = {
       noneMine: 'Du har ingen opgaver i dag endnu.', pickMore: 'Vælg opgaver', whoWhat: 'Hvem laver hvad i dag',
       freeN: (n) => (n === 1 ? '1 ledig opgave – vælg' : `${n} ledige opgaver – vælg`), anyone: 'Alle kan tage den',
     },
-    pl: { tasks: 'Opgaver og planer', house: 'Huset', log: 'Udført', loose: 'Opgaver uden plan' },
+    pl: { tasks: 'Opgaver og planer', pack: 'Pakkeliste', house: 'Huset', log: 'Udført', loose: 'Opgaver uden plan' },
     sk: {
       title: 'Skema', week: 'Uge {n}', lessons: '{n} lekt. fra {t}', hideHelp: 'Tryk på et fag for at skjule det i skemaet (fx RESS). Tryk igen for at vise det.', none: 'Intet skema endnu. Slå 📚 Skema til på skolens kalender under Opsætning → Kalender fra iPhone.',
       help: 'Lektionerne kommer fra kalendere med 📚 Skema slået til (Opsætning → Kalender fra iPhone). De vises kun her.',
@@ -57,7 +57,7 @@ const STRINGS = {
     td: {
       today: 'I dag', tomorrow: 'I morgen', pack: 'Med i tasken', packed: 'Pakket', everyone: 'Alle',
       packEmpty: 'Intet at pakke. Tilføj fx idrætstøj om tirsdagen eller madpakke hver hverdag.',
-      addPack: 'Tilføj til tasken', allPack: 'Hele pakkelisten', packNew: 'Ny ting til tasken',
+      addPack: 'Tilføj til tasken', allPack: 'Hele pakkelisten', planPack: 'Planlæg pakkelisten', packNoneDay: 'Intet at pakke {day}.', packEmptyShort: 'Ingen pakkeliste endnu.', packPlanHelp: 'Det, der skal med på en bestemt ugedag, dato eller til en begivenhed. I dag viser kun det, der skal med den dag.', packNew: 'Ny ting til tasken',
       packTitle: 'Hvad skal med?', whoPack: 'Til hvem (tom = alle)', when: 'Hvornår',
       when_days: 'Faste ugedage', when_date: 'En bestemt dag', when_event: 'Til en aftale',
       date: 'Dato', pickEvent: 'Aftale', weekdays: 'Hverdage',
@@ -70,7 +70,7 @@ const STRINGS = {
       eventPack: 'Med i tasken til denne aftale', addToPack: 'Tilføj til pakkelisten',
       calWhoNone: 'Hvem?', names: 'Navne', namesHelp: 'Navnene du bruger i 👤 på kalendere, aftaler og pakkelisten. Tryk for at rette eller slette et navn – det ændres alle steder. Tallet er hvor mange steder det bruges.', rename: 'Navn', renameHelp: 'Det nye navn bruges alle steder, hvor det gamle stod.', delPersonConfirm: 'Slet navnet {name}? Det fjernes fra alle kalendere, aftaler og pakkelisten.', calWhoHelp: 'Aftaler fra denne kalender vises under personen på I dag-siden. Du kan altid ændre det på den enkelte aftale.',
     },
-    tabs: { today: 'I dag', home: 'Hjem', tasks: 'Opgaver', plan: 'Planlæg', moments: 'Øjeblikke', calendar: 'Kalender', family: 'Opsætning', prices: 'Prisjagt' },
+    tabs: { today: 'I dag', home: 'Hjem', tasks: 'Opgaver', plan: 'Planlæg', moments: 'Øjeblikke', calendar: 'Kalender', family: 'Opsætning', prices: 'Prisjagt', school: 'Fra skolen' },
     pr: {
       notes: 'Kommentar til prisjægeren (valgfrit)', notesPh: 'Fx kun laveste pris · kun produkter med gode anmeldelser fra andre · ikke Amazon',
       checkNow: 'Tjek nu', checkAll: 'Tjek alle nu', pending: 'Tjekkes nu – resultatet kommer om få minutter',
@@ -289,7 +289,7 @@ const STRINGS = {
       startNow: 'Start nu på GitHub', scan: 'Scan QR-koden med MitID-appen (den skifter hvert sekund – vis den på en anden skærm, fx iPad).',
       otp: 'Skriv denne kode i MitID-appen:', approve: 'Godkend så i MitID-appen.',
       last: 'Sidst hentet: {when}', never: 'Ikke hentet endnu', saved: 'Gemt – henter inden for et par minutter',
-      queued: 'Henter inden for et par minutter', inbox: '📬 Fra skolen', post: 'Opslag', message: 'Besked',
+      queued: 'Henter inden for et par minutter', inbox: '📬 Fra skolen', nUnread: '{n} ulæste', post: 'Opslag', message: 'Besked',
       unread: 'ulæst', close: 'Luk', markUnread: 'Marker som ulæst', markAllRead: 'Marker alle som læst', atSchool: 'Skolen {day}', noItems: 'Intet fra MinUddannelse den dag.', ugenote: 'Ugenote', wholeWeek: 'Hele ugen', week: 'Uge {n}',
       login: 'Log ind med MitID (via a-Shell)', loginAgain: 'Log ind igen (via a-Shell)',
       phoneWhy: 'Skolens login (STIL) blokerer MitID fra servere, så du logger ind én gang fra telefonen. Bagefter holder serveren forbindelsen i live af sig selv.',
@@ -328,7 +328,7 @@ const STRINGS = {
       noneMine: 'You have no tasks today yet.', pickMore: 'Pick tasks', whoWhat: 'Who does what today',
       freeN: (n) => (n === 1 ? '1 free task – pick' : `${n} free tasks – pick`), anyone: 'Anyone can take it',
     },
-    pl: { tasks: 'Tasks and plans', house: 'The house', log: 'Done', loose: 'Tasks without a plan' },
+    pl: { tasks: 'Tasks and plans', pack: 'Packing list', house: 'The house', log: 'Done', loose: 'Tasks without a plan' },
     sk: {
       title: 'Timetable', week: 'Week {n}', lessons: '{n} lessons from {t}', hideHelp: 'Tap a subject to hide it from the timetable (e.g. RESS). Tap again to show it.', none: 'No timetable yet. Turn on 📚 Timetable for the school calendar under Setup → Calendar from iPhone.',
       help: 'Lessons come from calendars with 📚 Timetable on (Setup → Calendar from iPhone). They only show here.',
@@ -348,7 +348,7 @@ const STRINGS = {
     td: {
       today: 'Today', tomorrow: 'Tomorrow', pack: 'In the bag', packed: 'Packed', everyone: 'Everyone',
       packEmpty: 'Nothing to pack. Add e.g. PE kit on Tuesdays or a packed lunch every weekday.',
-      addPack: 'Add to the bag', allPack: 'Whole packing list', packNew: 'New thing for the bag',
+      addPack: 'Add to the bag', allPack: 'Whole packing list', planPack: 'Plan the packing list', packNoneDay: 'Nothing to pack {day}.', packEmptyShort: 'No packing list yet.', packPlanHelp: 'What goes in the bag on a weekday, a date or for an event. Today only shows what is needed that day.', packNew: 'New thing for the bag',
       packTitle: 'What goes in?', whoPack: 'For whom (empty = everyone)', when: 'When',
       when_days: 'Fixed weekdays', when_date: 'One day', when_event: 'For an event',
       date: 'Date', pickEvent: 'Event', weekdays: 'Weekdays',
@@ -361,7 +361,7 @@ const STRINGS = {
       eventPack: 'In the bag for this event', addToPack: 'Add to the packing list',
       calWhoNone: 'Who?', names: 'Names', namesHelp: 'The names you use in 👤 on calendars, events and the packing list. Tap to correct or delete a name – it changes everywhere. The number is how many places use it.', rename: 'Name', renameHelp: 'The new name replaces the old one everywhere.', delPersonConfirm: 'Delete the name {name}? It is removed from all calendars, events and the packing list.', calWhoHelp: 'Events from this calendar show under this person on the Today page. You can always change it on a single event.',
     },
-    tabs: { today: 'Today', home: 'Home', tasks: 'Tasks', plan: 'Plan', moments: 'Moments', calendar: 'Calendar', family: 'Setup', prices: 'Price watch' },
+    tabs: { today: 'Today', home: 'Home', tasks: 'Tasks', plan: 'Plan', moments: 'Moments', calendar: 'Calendar', family: 'Setup', prices: 'Price watch', school: 'From school' },
     pr: {
       notes: 'Comment for the price checker (optional)', notesPh: 'E.g. only the lowest price · only products with good reviews from others · not Amazon',
       checkNow: 'Check now', checkAll: 'Check all now', pending: 'Being checked – results in a few minutes',
@@ -580,7 +580,7 @@ const STRINGS = {
       startNow: 'Start now on GitHub', scan: 'Scan the QR code with the MitID app (it changes every second – show it on another screen, e.g. an iPad).',
       otp: 'Type this code in the MitID app:', approve: 'Then approve in the MitID app.',
       last: 'Last fetched: {when}', never: 'Not fetched yet', saved: 'Saved – fetching within a few minutes',
-      queued: 'Fetching within a few minutes', inbox: '📬 From school', post: 'Post', message: 'Message',
+      queued: 'Fetching within a few minutes', inbox: '📬 From school', nUnread: '{n} unread', post: 'Post', message: 'Message',
       unread: 'unread', close: 'Close', markUnread: 'Mark as unread', markAllRead: 'Mark all as read', atSchool: 'School {day}', noItems: 'Nothing from MinUddannelse that day.', ugenote: 'Weekly note', wholeWeek: 'Whole week', week: 'Week {n}',
       login: 'Log in with MitID (via a-Shell)', loginAgain: 'Log in again (via a-Shell)',
       phoneWhy: 'The school login (STIL) blocks MitID from servers, so you log in once from the phone. After that the server keeps the connection alive by itself.',
@@ -619,7 +619,7 @@ const STRINGS = {
       noneMine: 'Pas encore de tâches aujourd’hui.', pickMore: 'Choisir des tâches', whoWhat: 'Qui fait quoi aujourd’hui',
       freeN: (n) => (n === 1 ? '1 tâche libre – choisir' : `${n} tâches libres – choisir`), anyone: 'Tout le monde peut la prendre',
     },
-    pl: { tasks: 'Tâches et plans', house: 'La maison', log: 'Fait', loose: 'Tâches sans plan' },
+    pl: { tasks: 'Tâches et plans', pack: 'Liste du sac', house: 'La maison', log: 'Fait', loose: 'Tâches sans plan' },
     sk: {
       title: 'Emploi du temps', week: 'Semaine {n}', lessons: '{n} cours dès {t}', hideHelp: 'Touchez une matière pour la masquer (ex. RESS). Touchez à nouveau pour l’afficher.', none: 'Pas encore d’emploi du temps. Activez 📚 Emploi du temps pour le calendrier de l’école sous Réglages → Calendrier de l’iPhone.',
       help: 'Les cours viennent des calendriers avec 📚 Emploi du temps activé (Réglages → Calendrier de l’iPhone). Ils ne s’affichent qu’ici.',
@@ -639,7 +639,7 @@ const STRINGS = {
     td: {
       today: 'Aujourd’hui', tomorrow: 'Demain', pack: 'Dans le sac', packed: 'Prêt', everyone: 'Tous',
       packEmpty: 'Rien à préparer. Ajoutez par ex. la tenue de sport le mardi ou le déjeuner chaque jour d’école.',
-      addPack: 'Ajouter au sac', allPack: 'Toute la liste', packNew: 'Nouvel objet pour le sac',
+      addPack: 'Ajouter au sac', allPack: 'Toute la liste', planPack: 'Préparer la liste du sac', packNoneDay: 'Rien à préparer {day}.', packEmptyShort: 'Pas encore de liste du sac.', packPlanHelp: 'Ce qui va dans le sac un jour de la semaine, à une date ou pour un événement. Aujourd’hui n’affiche que ce qu’il faut ce jour-là.', packNew: 'Nouvel objet pour le sac',
       packTitle: 'Quoi emporter ?', whoPack: 'Pour qui (vide = tous)', when: 'Quand',
       when_days: 'Jours fixes', when_date: 'Un jour précis', when_event: 'Pour un événement',
       date: 'Date', pickEvent: 'Événement', weekdays: 'En semaine',
@@ -652,7 +652,7 @@ const STRINGS = {
       eventPack: 'Dans le sac pour cet événement', addToPack: 'Ajouter à la liste',
       calWhoNone: 'Qui ?', names: 'Prénoms', namesHelp: 'Les prénoms utilisés dans 👤 sur les calendriers, événements et la liste du sac. Touchez pour corriger ou supprimer – partout à la fois. Le chiffre indique le nombre d’usages.', rename: 'Prénom', renameHelp: 'Le nouveau prénom remplace l’ancien partout.', delPersonConfirm: 'Supprimer {name} ? Il sera retiré des calendriers, événements et de la liste du sac.', calWhoHelp: 'Les événements de ce calendrier s’affichent pour cette personne sur la page Aujourd’hui. Modifiable sur chaque événement.',
     },
-    tabs: { today: 'Aujourd’hui', home: 'Accueil', tasks: 'Tâches', plan: 'Planifier', moments: 'Moments', calendar: 'Calendrier', family: 'Réglages', prices: 'Veille prix' },
+    tabs: { today: 'Aujourd’hui', home: 'Accueil', tasks: 'Tâches', plan: 'Planifier', moments: 'Moments', calendar: 'Calendrier', family: 'Réglages', prices: 'Veille prix', school: 'De l’école' },
     pr: {
       notes: 'Commentaire pour la veille prix (facultatif)', notesPh: 'Ex. seulement le prix le plus bas · seulement des produits bien notés par d’autres · pas Amazon',
       checkNow: 'Vérifier', checkAll: 'Tout vérifier', pending: 'Vérification en cours – résultat dans quelques minutes',
@@ -871,7 +871,7 @@ const STRINGS = {
       startNow: 'Démarrer sur GitHub', scan: 'Scannez le code QR avec l’app MitID (il change chaque seconde – affichez-le sur un autre écran, par ex. un iPad).',
       otp: 'Saisissez ce code dans l’app MitID :', approve: 'Puis validez dans l’app MitID.',
       last: 'Dernier import : {when}', never: 'Pas encore importé', saved: 'Enregistré – import dans quelques minutes',
-      queued: 'Import dans quelques minutes', inbox: '📬 De l’école', post: 'Publication', message: 'Message',
+      queued: 'Import dans quelques minutes', inbox: '📬 De l’école', nUnread: '{n} non lus', post: 'Publication', message: 'Message',
       unread: 'non lu', close: 'Fermer', markUnread: 'Marquer comme non lu', markAllRead: 'Tout marquer comme lu', atSchool: 'École {day}', noItems: 'Rien de MinUddannelse ce jour-là.', ugenote: 'Note de la semaine', wholeWeek: 'Toute la semaine', week: 'Semaine {n}',
       login: 'Se connecter avec MitID (via a-Shell)', loginAgain: 'Se reconnecter (via a-Shell)',
       phoneWhy: 'La connexion de l’école (STIL) bloque MitID depuis les serveurs : vous vous connectez donc une fois depuis le téléphone. Ensuite, le serveur garde la connexion active tout seul.',

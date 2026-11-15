@@ -663,3 +663,27 @@ a.row.school-item { text-decoration: none; color: inherit; }
 .row.hw.done .ttl { text-decoration: line-through; opacity: .6; }
 .row.hw .body { display: flex; flex-direction: column; }
 .hw-day { text-transform: capitalize; }
+
+/* ---------- I dag: tighter page (less scrolling) ---------- */
+.today-page h2 { margin: 18px 0 8px; }
+.today-page details.fold { margin-top: 2px; }
+.list.tight { gap: 5px; }
+.list.tight .row.row.row { padding: 6px 10px; gap: 8px; border-radius: 12px; }
+.list.tight .row .ttl { font-size: .95rem; line-height: 1.25; }
+.list.tight .row .meta { font-size: .78rem; }
+.list.tight .row .when { width: 38px; }
+.list.tight .row .when b { font-size: .95rem; }
+.list.tight .row .when small { font-size: .66rem; }
+.list.tight .row .lead.big { font-size: 1.15rem; }
+.list.tight .row.pack .tick { width: 26px; height: 26px; }
+@media (min-width: 540px) { .list.cols.tight { gap: 5px; } }
+.sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sec-head h2 { flex: 1; }
+.school-latest > .small { margin-top: 6px; }
+.bag-none { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  margin-top: 14px; padding: 8px 12px; border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); color: var(--muted); font-size: .92rem; }
+.card.bag { padding: 12px 14px; }
+.card.bag .bag-head h2 { margin: 0; }
+.today-page .hw-hint { font-size: .75rem; margin: 6px 0 0; }
+.list.tight .row.hw .check { flex-basis: 22px; height: 22px; }
+.list + h3.subhead { margin-top: 14px; }

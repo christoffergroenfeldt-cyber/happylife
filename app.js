@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '49'; // keep in step with CACHE in sw.js
+const APP_VERSION = '50'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -340,7 +340,7 @@ function render() {
   if (!S.session) return renderAuth();
   if (!S.me) return renderSetup();
   const tabs = ['today', 'tasks', ...(isParent() ? ['plan'] : []), 'moments', 'calendar', 'family'];
-  if (!tabs.includes(S.tab) && !(S.tab === 'prices' && S.pricesReady)) S.tab = 'today';
+  if (!tabs.includes(S.tab) && !(S.tab === 'prices' && S.pricesReady) && !(S.tab === 'school' && S.school)) S.tab = 'today';
   const svg = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
   const icons = {
     today: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>'),
@@ -351,7 +351,7 @@ function render() {
     calendar: svg('<rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/>'),
     family: svg('<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2A4.5 4.5 0 0 1 21 18.5"/>'),
   };
-  const views = { today: viewToday, home: viewHome, tasks: viewTasks, plan: viewPlan, moments: viewMoments, calendar: viewCalendar, family: viewFamily, prices: viewPrices };
+  const views = { today: viewToday, home: viewHome, tasks: viewTasks, plan: viewPlan, moments: viewMoments, calendar: viewCalendar, family: viewFamily, prices: viewPrices, school: viewSchool };
   app.innerHTML = `
     <header class="top hero hero-${S.tab === 'today' ? 'home' : S.tab}">
       <div class="hero-text">
@@ -687,9 +687,9 @@ function comingUp(d, test) {
 }
 
 function comingList(rows, emptyKey) {
-  const FIRST = 6;
+  const FIRST = 5;
   if (!rows.length) return `<p class="empty">${esc(t(emptyKey))}</p>`;
-  const html = (list) => `<div class="list cols">${list.map(({ ev, date }) => dayEventRow(ev, date, true)).join('')}</div>`;
+  const html = (list) => `<div class="list cols tight">${list.map(({ ev, date }) => dayEventRow(ev, date, true)).join('')}</div>`;
   return html(rows.slice(0, FIRST)) + (rows.length > FIRST
     ? `<details class="more"><summary>${esc(t('showAll'))} (${rows.length})</summary>${html(rows.slice(FIRST))}</details>` : '');
 }
@@ -727,32 +727,32 @@ function viewToday() {
       ${mine.length ? `<span class="chip ${nOpen ? '' : 'yes'}">${mine.length - nOpen}/${mine.length}</span>` : ''}</div>
     ${mine.length ? `<div class="list cols">${mine.map(({ task, st }) => myTaskRow(task, st)).join('')}</div>` : `<p class="empty">${esc(t('pk.noneMine'))}</p>`}
     <button class="small" data-act="tab" data-id="tasks">🎯 ${esc(t('pk.pickMore'))}</button>` : '';
+  // The bag: only what is due on the day shown; the whole list is kept under Planlæg
   const packs = packsOn(d);
   const groups = {};
   packs.forEach((x) => { (groups[x.who || ''] ||= []).push(x); });
   const order = Object.keys(groups).sort((a, b) => (!a) - (!b) || a.localeCompare(b));
   const nDone = packs.filter((x) => packIsDone(x.id, d)).length;
-  const bag = parent ? `<div class="card bag">
+  const planPack = `<button class="small" data-act="planMode" data-id="pack">🗂️ ${esc(t('td.planPack'))} →</button>`;
+  const bag = !parent ? '' : packs.length ? `<div class="card bag">
       <div class="bag-head"><h2>🎒 ${esc(t('td.pack'))}</h2>
-        ${packs.length ? `<span class="chip ${nDone === packs.length ? 'yes' : ''}">${nDone}/${packs.length}</span>` : ''}</div>
-      ${packs.length ? order.map((w) => `<h3 class="subhead">${esc(w || t('td.everyone'))}</h3>
-        <div class="list cols">${groups[w].map((x) => packRow(x, d)).join('')}</div>`).join('')
-        : `<p class="empty">${esc(t('td.packEmpty'))}</p>`}
-      <div class="acts"><button class="small primary" data-act="newPack">＋ ${t('td.addPack')}</button></div>
-      ${S.packs.length ? `<h3 class="subhead">${esc(t('td.allPack'))} (${S.packs.length})</h3>${packOverview()}` : ''}
-    </div>` : '';
+        <span class="chip ${nDone === packs.length ? 'yes' : ''}">${nDone}/${packs.length}</span></div>
+      ${order.map((w) => `${order.length > 1 || w ? `<h3 class="subhead">${esc(w || t('td.everyone'))}</h3>` : ''}
+        <div class="list cols tight">${groups[w].map((x) => packRow(x, d)).join('')}</div>`).join('')}
+      <div class="acts">${planPack}</div>
+    </div>` : `<div class="bag-none"><span>🎒 ${esc(S.packs.length ? t('td.packNoneDay', { day: t(isToday ? 'td.today' : 'td.tomorrow').toLowerCase() }) : t('td.packEmptyShort'))}</span>${planPack}</div>`;
 
   // 2. Dagen: the program
   const fdRow = S.fdWeeks.find((w) => w.on_date === d && w.title && !w.cancelled);
   const program = S.events.filter((ev) => !ev.lesson && occursOn(ev, d))
     .sort((a, b) => (timeOf(a) || '00').localeCompare(timeOf(b) || '00'));
   const day = `${skemaLink(d)}
-    ${fdRow ? `<div class="list fd-today"><div class="row dayev" data-act="fdPick" data-id="${fdRow.week_start}"><div class="when time">${fdRow.at_time ? `<b>${esc(fdRow.at_time)}</b>` : `<small>${esc(t('td.allDay'))}</small>`}</div>
-      <div class="body"><div class="ttl">${esc(fdRow.emoji || '🎉')} ${esc(t('fd.title'))}: ${esc(fdRow.title)}</div><div class="meta">${esc(t('fd.chosenBy', { name: personLabel(fdRow.chooser) }))}</div></div></div></div>` : ''}
-    ${program.length ? `<div class="list">${program.map((ev) => dayEventRow(ev, d, false)).join('')}</div>` : fdRow ? '' : `<p class="empty">${esc(t('td.noProgram'))}</p>`}
+    ${fdRow ? `<div class="list tight fd-today"><div class="row dayev" data-act="fdPick" data-id="${fdRow.week_start}"><div class="when time">${fdRow.at_time ? `<b>${esc(fdRow.at_time)}</b>` : `<small>${esc(t('td.allDay'))}</small>`}</div>
+      <div class="body"><div class="ttl one">${esc(fdRow.emoji || '🎉')} ${esc(t('fd.title'))}: ${esc(fdRow.title)}</div><div class="meta one">${esc(t('fd.chosenBy', { name: personLabel(fdRow.chooser) }))}</div></div></div></div>` : ''}
+    ${program.length ? `<div class="list cols tight">${program.map((ev) => dayEventRow(ev, d, false)).join('')}</div>` : fdRow ? '' : `<p class="empty">${esc(t('td.noProgram'))}</p>`}
     ${fdRow ? '' : famdayCard(true)}`;
 
-  // 4. Snart: one list for the next 30 days, filtered by who it's about or by calendar
+  // 3. Snart: one list for the next 30 days, filtered by who it's about or by calendar
   const all = comingUp(d, () => true);
   const special = (ev) => ['birthday', 'anniversary'].includes(ev.type) && ev.yearly;
   const filters = [['all', t('calFilterAll'), () => true]];
@@ -773,31 +773,34 @@ function viewToday() {
     `<button class="hchip ${f.id === sf ? 'on' : ''}" data-act="snartFilter" data-id="${f.id}">${f.raw ? f.label : esc(f.label)} (${f.n})</button>`).join('')}</div>` : '';
   const snart = `${snartChips}${comingList(all.filter(({ ev }) => cur.fn(ev)), 'td.none')}`;
 
-  // 5. Tid til noget særligt: the two most overdue moments
-  const due = S.trackers
-    .map((tr) => ({ tr, st: trackerStatus(tr.interval_days, entriesOf(tr.id).map((e) => e.done_on), today()) }))
-    .filter((x) => x.st.dueIn <= 0 && !plannedAhead(x.tr))
-    .sort((a, b) => a.st.dueIn - b.st.dueIn);
-  const moments = due.length ? `${due.slice(0, 2).map(({ tr, st }) => momentCard(tr, st, true)).join('')}
-    <button class="small" data-act="tab" data-id="moments">${esc(t('td.allMoments', due.length))} →</button>` : '';
-
+  // Øjeblikke has its own page, so it is not repeated here
   const anyTags = S.events.some((ev) => (ev.people || []).length);
-  return `${head}
+  return `<div class="today-page">${head}
+    ${parent ? homeworkList() : ''}
+    ${parent ? schoolLatest() : ''}
     ${tasksBlock}
     ${bag}
     <h2>📅 ${esc(t(isToday ? 'td.program' : 'td.programTomorrow'))}</h2>${day}
-    ${parent ? homeworkList() : ''}
     ${parent ? schoolDay(d) : ''}
-    ${parent ? schoolInbox() : ''}
     ${isToday ? fold('who', `👨‍👩‍👧‍👦 ${esc(t('pk.whoWhat'))}`, familyTodaySection()) : ''}
     ${fold('snart', `🗓️ ${esc(t('upcoming'))}`, snart, all.length)}
-    ${fold('moments', `💛 ${esc(t('timeFor'))}`, moments, due.length || '')}
     ${pricesTeaser()}
-    ${parent && !anyTags ? `<p class="hint">💡 ${esc(t('td.tagHint'))}</p>` : ''}`;
+    ${parent && !anyTags ? `<p class="hint">💡 ${esc(t('td.tagHint'))}</p>` : ''}</div>`;
+}
+
+// Planlæg → Pakkeliste: the whole list, per person; I dag shows only what's due that day
+function packPlan() {
+  const by = {};
+  S.packs.forEach((x) => { (by[x.who || ''] ||= []).push(x); });
+  const who = Object.keys(by).sort((a, b) => (!a) - (!b) || a.localeCompare(b));
+  return `<div class="toolbar"><button class="primary" data-act="newPack">＋ ${t('td.addPack')}</button></div>
+    <p class="hint">${esc(t('td.packPlanHelp'))}</p>
+    ${S.packs.length ? who.map((w) => `<h2>${esc(w || t('td.everyone'))} <small class="count">${by[w].length}</small></h2>${packOverview(by[w])}`).join('')
+      : `<p class="empty">${esc(t('td.packEmpty'))}</p>`}`;
 }
 
 // All pack items, for changing ones that aren't due today
-function packOverview() {
+function packOverview(items = S.packs) {
   const dayNames = [1, 2, 3, 4, 5, 6, 7].map((i) => fmtDay(addDays('2024-01-01', i - 1), { weekday: 'short' }));
   const whenOf = (x) => {
     if (x.days?.length) return x.days.length === 5 && [1, 2, 3, 4, 5].every((i) => x.days.includes(i))
@@ -807,7 +810,7 @@ function packOverview() {
     return ev ? `${eventIcon(ev.type)} ${ev.title}` : '';
   };
   // small tiles, as many across as fit; tap one to change it
-  return `<div class="pack-tiles">${S.packs.slice().sort((a, b) => (a.who || '~').localeCompare(b.who || '~') || a.title.localeCompare(b.title)).map((x) => `
+  return `<div class="pack-tiles">${items.slice().sort((a, b) => (a.who || '~').localeCompare(b.who || '~') || a.title.localeCompare(b.title)).map((x) => `
     <button type="button" class="pack-tile" data-act="editPack" data-id="${x.id}">
       <b>${esc(x.title)}</b><small>${esc(x.who || t('td.everyone'))} · ${esc(whenOf(x))}</small></button>`).join('')}</div>`;
 }
@@ -1383,8 +1386,9 @@ function manageRow(task) {
 }
 
 function viewPlan() {
-  const mode = ['tasks', 'house', 'log'].includes(S.planMode) ? S.planMode : 'tasks';
-  const seg = `<div class="seg house-seg">${['tasks', 'house', 'log'].map((m) =>
+  const modes = ['tasks', 'pack', 'house', 'log'];
+  const mode = modes.includes(S.planMode) ? S.planMode : 'tasks';
+  const seg = `<div class="seg house-seg">${modes.map((m) =>
     `<button data-act="planMode" data-id="${m}" class="${mode === m ? 'on' : ''}">${esc(t('pl.' + m))}</button>`).join('')}</div>`;
   if (mode === 'house') {
     if (!S.places.length && !S.chores.length) return `${seg}<div class="card"><p>${esc(t('house.empty'))}</p>
@@ -1392,6 +1396,7 @@ function viewPlan() {
     return seg + houseSetup();
   }
   if (mode === 'log') return seg + houseLog();
+  if (mode === 'pack') return seg + packPlan();
   const all = S.tasks.filter((task) => !isHouse(task)).map((task) => ({ task, st: taskState(task) }));
   const loose = all.filter(({ task }) => !task.plan_id);
   const plans = S.plans.map((p) => {
@@ -2855,16 +2860,34 @@ function schoolMsgRow(m) {
       <div class="meta">${esc(m.sender || '')}${m.sent_at ? ` · ${esc(fmtDate(m.sent_at.slice(0, 10)))}` : ''}${unread ? ` · <b>${esc(t('sc.unread'))}</b>` : ''}</div></div></div>`;
 }
 
-// Today: the newest from the last 14 days (unread and important first)
-function schoolInbox() {
+const newestFirst = (a, b) => (b.sent_at || '').localeCompare(a.sent_at || '');
+
+// Today: just the newest message, and a link to all of them
+function schoolLatest() {
   if (!S.school || !S.schoolMsgs.length) return '';
-  const since = isoMinus(14);
-  const recent = S.schoolMsgs.filter((m) => (m.sent_at || '') >= since)
-    .sort((a, b) => (schoolUnread(b) - schoolUnread(a)) || (b.important - a.important) || (b.sent_at || '').localeCompare(a.sent_at || ''));
-  const body = recent.length ? `<div class="list">${recent.slice(0, 5).map(schoolMsgRow).join('')}</div>`
-    : `<p class="empty">${esc(t('sc.none'))}</p>`;
-  return fold('school', esc(t('sc.inbox')), `${body}
-    <button class="small" data-act="scAll">${esc(t('sc.all', { n: S.schoolMsgs.length }))}</button>`, recent.filter(schoolUnread).length || '');
+  const latest = [...S.schoolMsgs].sort(newestFirst)[0];
+  const unread = S.schoolMsgs.filter(schoolUnread).length;
+  return `<div class="school-latest">
+    <div class="sec-head"><h2>${esc(t('sc.inbox'))}</h2>${unread ? `<span class="chip up">${esc(t('sc.nUnread', { n: unread }))}</span>` : ''}</div>
+    <div class="list tight">${schoolMsgRow(latest)}</div>
+    <button class="small" data-act="tab" data-id="school">${esc(t('sc.all', { n: S.schoolMsgs.length }))} →</button></div>`;
+}
+
+// Subpage: every message and post, newest first, unread ones can be filtered
+function viewSchool() {
+  const unread = S.schoolMsgs.filter(schoolUnread);
+  const only = S.schoolUnreadOnly && unread.length;
+  const list = (only ? unread : S.schoolMsgs).slice().sort(newestFirst);
+  const month = (m) => (m.sent_at || '').slice(0, 7);
+  const months = [...new Set(list.map(month))];
+  const mLabel = (ym) => (ym ? cap(new Date(`${ym}-15T12:00:00`).toLocaleDateString(LOCALE(), { month: 'long', year: 'numeric' })) : '');
+  return `<div class="toolbar"><button data-act="tab" data-id="today">‹ ${esc(t('tabs.today'))}</button>
+      ${unread.length ? `<button data-act="scAllRead">✓ ${esc(t('sc.markAllRead'))}</button>` : ''}</div>
+    ${unread.length ? `<div class="seg"><button data-act="scOnlyUnread" data-id="" class="${only ? '' : 'on'}">${esc(t('calFilterAll'))} (${S.schoolMsgs.length})</button>
+      <button data-act="scOnlyUnread" data-id="1" class="${only ? 'on' : ''}">${esc(cap(t('sc.unread')))} (${unread.length})</button></div>` : ''}
+    ${list.length ? months.map((ym) => `${mLabel(ym) ? `<h3 class="subhead">${esc(mLabel(ym))}</h3>` : ''}
+      <div class="list tight">${list.filter((m) => month(m) === ym).map(schoolMsgRow).join('')}</div>`).join('')
+      : `<p class="empty">${esc(t('sc.none'))}</p>`}`;
 }
 
 // MinUddannelse (via Aula): the day's plan per child + the week's ugenoter
@@ -2929,9 +2952,9 @@ function homeworkList() {
   const label = (dd) => !dd ? t('hw.noDay') : dd === t0 ? t('td.today') : dd === addDays(t0, 1) ? t('td.tomorrow')
     : `${weekdayName(dd)} ${fmtDate(dd, getLang())}`;
   const body = days.map((dd) => `<h3 class="subhead hw-day">${esc(label(dd))}</h3>
-    <div class="list">${show.filter((h) => (h.due_date || '') === dd)
+    <div class="list cols tight">${show.filter((h) => (h.due_date || '') === dd)
       .sort((a, b) => (a.child || '').localeCompare(b.child || '') || a.kind.localeCompare(b.kind)).map(homeworkRow).join('')}</div>`).join('')
-    + `<p class="hint">${esc(t('hw.hint'))}</p>`;
+    + `<p class="hint hw-hint">${esc(t('hw.hint'))}</p>`;
   return fold('hw', `📝 ${esc(t('hw.title'))}`, body, show.filter((h) => !h.done).length || '');
 }
 
@@ -2963,12 +2986,6 @@ function schoolMsgDialog(m) {
     <div class="msg-body">${esc(m.body || '').replace(/\n/g, '<br>')}</div>
     <div class="btns"><button type="button" class="link" data-act="scUnread" data-id="${m.id}">${esc(t('sc.markUnread'))}</button>
       <span class="grow"></span><button type="button" data-act="close">${esc(t('sc.close'))}</button></div></div>`);
-}
-
-function schoolAllDialog() {
-  openDialog(`<div class="form"><h2>${esc(t('sc.inbox'))}</h2>
-    <div class="list">${S.schoolMsgs.map(schoolMsgRow).join('')}</div>
-    <div class="btns">${S.schoolMsgs.some(schoolUnread) ? `<button type="button" class="link" data-act="scAllRead">${esc(t('sc.markAllRead'))}</button>` : ''}<span class="grow"></span><button type="button" data-act="close">${esc(t('sc.close'))}</button></div></div>`);
 }
 
 // ------------------------------------------------------------ price watch
@@ -3481,10 +3498,10 @@ const ACTIONS = {
     await run(sb.from('school_reads').delete().eq('message_id', id));
   },
   scAllRead: async () => {
-    S.schoolMsgs.forEach((m) => S.schoolRead.add(m.id)); closeDialog(); render();
+    S.schoolMsgs.forEach((m) => S.schoolRead.add(m.id)); S.schoolUnreadOnly = false; closeDialog(); render();
     await run(sb.rpc('school_mark_all_read'));
   },
-  scAll: () => schoolAllDialog(),
+  scOnlyUnread: (id) => { S.schoolUnreadOnly = !!id; render(); },
   scWeek: (week) => schoolWeekDialog(week),
   hwToggle: async (id) => {
     const h = byId(S.homework, id);
