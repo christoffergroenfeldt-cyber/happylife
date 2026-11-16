@@ -37,6 +37,7 @@ const STRINGS = {
       noneMine: 'Du har ingen opgaver i dag endnu.', pickMore: 'Vælg opgaver', whoWhat: 'Hvem laver hvad i dag',
       freeN: (n) => (n === 1 ? '1 ledig opgave – vælg' : `${n} ledige opgaver – vælg`), anyone: 'Alle kan tage den',
     },
+    dn: { title: 'Udført', allDone: 'Alt er klaret 🎉', none: 'Intet er krydset af de seneste 30 dage.', help: 'Det, der er krydset af de seneste 30 dage. Fortryd, hvis noget blev krydset af ved en fejl.', yesterday: 'i går', moved: 'Flyttet til Udført' },
     pl: { tasks: 'Opgaver og planer', pack: 'Pakkeliste', house: 'Huset', log: 'Udført', loose: 'Opgaver uden plan' },
     sk: {
       title: 'Skema', week: 'Uge {n}', lessons: '{n} lekt. fra {t}', hideHelp: 'Tryk på et fag for at skjule det i skemaet (fx RESS). Tryk igen for at vise det.', none: 'Intet skema endnu. Slå 📚 Skema til på skolens kalender under Opsætning → Kalender fra iPhone.',
@@ -70,7 +71,7 @@ const STRINGS = {
       eventPack: 'Med i tasken til denne aftale', addToPack: 'Tilføj til pakkelisten',
       calWhoNone: 'Hvem?', names: 'Navne', namesHelp: 'Navnene du bruger i 👤 på kalendere, aftaler og pakkelisten. Tryk for at rette eller slette et navn – det ændres alle steder. Tallet er hvor mange steder det bruges.', rename: 'Navn', renameHelp: 'Det nye navn bruges alle steder, hvor det gamle stod.', delPersonConfirm: 'Slet navnet {name}? Det fjernes fra alle kalendere, aftaler og pakkelisten.', calWhoHelp: 'Aftaler fra denne kalender vises under personen på I dag-siden. Du kan altid ændre det på den enkelte aftale.',
     },
-    tabs: { today: 'I dag', home: 'Hjem', tasks: 'Opgaver', plan: 'Planlæg', moments: 'Øjeblikke', calendar: 'Kalender', family: 'Opsætning', prices: 'Prisjagt', school: 'Fra skolen' },
+    tabs: { today: 'I dag', home: 'Hjem', tasks: 'Opgaver', plan: 'Planlæg', moments: 'Øjeblikke', calendar: 'Kalender', family: 'Opsætning', prices: 'Prisjagt', school: 'Fra skolen', done: 'Udført' },
     pr: {
       notes: 'Kommentar til prisjægeren (valgfrit)', notesPh: 'Fx kun laveste pris · kun produkter med gode anmeldelser fra andre · ikke Amazon',
       checkNow: 'Tjek nu', checkAll: 'Tjek alle nu', pending: 'Tjekkes nu – resultatet kommer om få minutter',
@@ -328,6 +329,7 @@ const STRINGS = {
       noneMine: 'You have no tasks today yet.', pickMore: 'Pick tasks', whoWhat: 'Who does what today',
       freeN: (n) => (n === 1 ? '1 free task – pick' : `${n} free tasks – pick`), anyone: 'Anyone can take it',
     },
+    dn: { title: 'Done', allDone: 'All done 🎉', none: 'Nothing ticked off in the last 30 days.', help: 'What was ticked off in the last 30 days. Undo if something was ticked by mistake.', yesterday: 'yesterday', moved: 'Moved to Done' },
     pl: { tasks: 'Tasks and plans', pack: 'Packing list', house: 'The house', log: 'Done', loose: 'Tasks without a plan' },
     sk: {
       title: 'Timetable', week: 'Week {n}', lessons: '{n} lessons from {t}', hideHelp: 'Tap a subject to hide it from the timetable (e.g. RESS). Tap again to show it.', none: 'No timetable yet. Turn on 📚 Timetable for the school calendar under Setup → Calendar from iPhone.',
@@ -361,7 +363,7 @@ const STRINGS = {
       eventPack: 'In the bag for this event', addToPack: 'Add to the packing list',
       calWhoNone: 'Who?', names: 'Names', namesHelp: 'The names you use in 👤 on calendars, events and the packing list. Tap to correct or delete a name – it changes everywhere. The number is how many places use it.', rename: 'Name', renameHelp: 'The new name replaces the old one everywhere.', delPersonConfirm: 'Delete the name {name}? It is removed from all calendars, events and the packing list.', calWhoHelp: 'Events from this calendar show under this person on the Today page. You can always change it on a single event.',
     },
-    tabs: { today: 'Today', home: 'Home', tasks: 'Tasks', plan: 'Plan', moments: 'Moments', calendar: 'Calendar', family: 'Setup', prices: 'Price watch', school: 'From school' },
+    tabs: { today: 'Today', home: 'Home', tasks: 'Tasks', plan: 'Plan', moments: 'Moments', calendar: 'Calendar', family: 'Setup', prices: 'Price watch', school: 'From school', done: 'Done' },
     pr: {
       notes: 'Comment for the price checker (optional)', notesPh: 'E.g. only the lowest price · only products with good reviews from others · not Amazon',
       checkNow: 'Check now', checkAll: 'Check all now', pending: 'Being checked – results in a few minutes',
@@ -619,6 +621,7 @@ const STRINGS = {
       noneMine: 'Pas encore de tâches aujourd’hui.', pickMore: 'Choisir des tâches', whoWhat: 'Qui fait quoi aujourd’hui',
       freeN: (n) => (n === 1 ? '1 tâche libre – choisir' : `${n} tâches libres – choisir`), anyone: 'Tout le monde peut la prendre',
     },
+    dn: { title: 'Fait', allDone: 'Tout est fait 🎉', none: 'Rien de coché ces 30 derniers jours.', help: 'Ce qui a été coché ces 30 derniers jours. Annulez si quelque chose a été coché par erreur.', yesterday: 'hier', moved: 'Déplacé vers Fait' },
     pl: { tasks: 'Tâches et plans', pack: 'Liste du sac', house: 'La maison', log: 'Fait', loose: 'Tâches sans plan' },
     sk: {
       title: 'Emploi du temps', week: 'Semaine {n}', lessons: '{n} cours dès {t}', hideHelp: 'Touchez une matière pour la masquer (ex. RESS). Touchez à nouveau pour l’afficher.', none: 'Pas encore d’emploi du temps. Activez 📚 Emploi du temps pour le calendrier de l’école sous Réglages → Calendrier de l’iPhone.',
@@ -652,7 +655,7 @@ const STRINGS = {
       eventPack: 'Dans le sac pour cet événement', addToPack: 'Ajouter à la liste',
       calWhoNone: 'Qui ?', names: 'Prénoms', namesHelp: 'Les prénoms utilisés dans 👤 sur les calendriers, événements et la liste du sac. Touchez pour corriger ou supprimer – partout à la fois. Le chiffre indique le nombre d’usages.', rename: 'Prénom', renameHelp: 'Le nouveau prénom remplace l’ancien partout.', delPersonConfirm: 'Supprimer {name} ? Il sera retiré des calendriers, événements et de la liste du sac.', calWhoHelp: 'Les événements de ce calendrier s’affichent pour cette personne sur la page Aujourd’hui. Modifiable sur chaque événement.',
     },
-    tabs: { today: 'Aujourd’hui', home: 'Accueil', tasks: 'Tâches', plan: 'Planifier', moments: 'Moments', calendar: 'Calendrier', family: 'Réglages', prices: 'Veille prix', school: 'De l’école' },
+    tabs: { today: 'Aujourd’hui', home: 'Accueil', tasks: 'Tâches', plan: 'Planifier', moments: 'Moments', calendar: 'Calendrier', family: 'Réglages', prices: 'Veille prix', school: 'De l’école', done: 'Fait' },
     pr: {
       notes: 'Commentaire pour la veille prix (facultatif)', notesPh: 'Ex. seulement le prix le plus bas · seulement des produits bien notés par d’autres · pas Amazon',
       checkNow: 'Vérifier', checkAll: 'Tout vérifier', pending: 'Vérification en cours – résultat dans quelques minutes',

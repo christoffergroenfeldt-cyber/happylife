@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '52'; // keep in step with CACHE in sw.js
+const APP_VERSION = '53'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -340,7 +340,7 @@ function render() {
   if (!S.session) return renderAuth();
   if (!S.me) return renderSetup();
   const tabs = ['today', 'tasks', ...(isParent() ? ['plan'] : []), 'moments', 'calendar', 'family'];
-  if (!tabs.includes(S.tab) && !(S.tab === 'prices' && S.pricesReady) && !(S.tab === 'school' && S.school)) S.tab = 'today';
+  if (!tabs.includes(S.tab) && !(S.tab === 'prices' && S.pricesReady) && !(S.tab === 'school' && S.school) && S.tab !== 'done') S.tab = 'today';
   const svg = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
   const icons = {
     today: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>'),
@@ -351,7 +351,7 @@ function render() {
     calendar: svg('<rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/>'),
     family: svg('<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2A4.5 4.5 0 0 1 21 18.5"/>'),
   };
-  const views = { today: viewToday, home: viewHome, tasks: viewTasks, plan: viewPlan, moments: viewMoments, calendar: viewCalendar, family: viewFamily, prices: viewPrices, school: viewSchool };
+  const views = { today: viewToday, home: viewHome, tasks: viewTasks, plan: viewPlan, moments: viewMoments, calendar: viewCalendar, family: viewFamily, prices: viewPrices, school: viewSchool, done: viewDone };
   app.innerHTML = `
     <header class="top hero hero-${S.tab === 'today' ? 'home' : S.tab}">
       <div class="hero-text">
@@ -722,11 +722,13 @@ function viewToday() {
 
   // 1. Mit: my tasks and the bags
   const mine = isToday ? myTasksToday() : [];
-  const nOpen = mine.filter((x) => !x.st.done).length;
+  const open = mine.filter((x) => !x.st.done);
+  const nDoneMine = mine.length - open.length;
   const tasksBlock = isToday ? `<div class="mytasks-head"><h2>✅ ${esc(t('myToday'))}</h2>
-      ${mine.length ? `<span class="chip ${nOpen ? '' : 'yes'}">${mine.length - nOpen}/${mine.length}</span>` : ''}</div>
-    ${mine.length ? `<div class="list cols">${mine.map(({ task, st }) => myTaskRow(task, st)).join('')}</div>` : `<p class="empty">${esc(t('pk.noneMine'))}</p>`}
-    <button class="small" data-act="tab" data-id="tasks">🎯 ${esc(t('pk.pickMore'))}</button>` : '';
+      ${mine.length ? `<span class="chip ${open.length ? '' : 'yes'}">${nDoneMine}/${mine.length}</span>` : ''}</div>
+    ${open.length ? `<div class="list cols">${open.map(({ task, st }) => myTaskRow(task, st)).join('')}</div>`
+      : `<p class="${mine.length ? 'allgood' : 'empty'}">${esc(t(mine.length ? 'dn.allDone' : 'pk.noneMine'))}</p>`}
+    <div class="acts"><button class="small" data-act="tab" data-id="tasks">🎯 ${esc(t('pk.pickMore'))}</button>${doneLink(nDoneMine)}</div>` : '';
   // The bag: only what is due on the day shown; the whole list is kept under Planlæg
   const packs = packsOn(d);
   const groups = {};
@@ -1318,11 +1320,62 @@ function myTaskRow(task, st) {
   </div>`;
 }
 
-// Mine today: picked by me, or given to me / my role (done ones stay, ticked)
+// Mine today: picked by me, or given to me / my role (I dag shows the open ones;
+// the ticked ones move to Udført)
 function myTasksToday() {
   return S.tasks.map((task) => ({ task, st: taskState(task) }))
-    .filter(({ st }) => st.active && (st.kind === 'open' ? st.took || st.doneByMe : st.forMe))
-    .sort((a, b) => a.st.done - b.st.done);
+    .filter(({ task, st }) => st.active && !oldOnce(task, st) && (st.kind === 'open' ? st.took || st.doneByMe : st.forMe));
+}
+// A one-off task finished on an earlier day is history: it only lives in Udført
+const oldOnce = (task, st) => task.recurrence === 'once' && st.done
+  && !S.done.some((d) => d.task_id === task.id && d.done_on === today());
+
+// ------------------------------------------------------------ Udført
+// Everything ticked off in the last 30 days (tasks, chores and homework), newest first.
+// Undo is offered for what I did in the task's current period.
+const localDay = (ts) => todayISO(new Date(ts));
+function doneItems() {
+  const since = isoMinus(30);
+  const td = today();
+  const tasks = S.done.filter((d) => d.done_on >= since && byId(S.tasks, d.task_id)).map((d) => {
+    const task = byId(S.tasks, d.task_id);
+    const mine = d.done_by === uid() && (task.recurrence === 'once' || d.period === periodKey(task, td));
+    return { day: d.done_on, at: String(d.created_at || ''), icon: taskIcon(task), title: taskTitle(task),
+      meta: [memberName(d.done_by), task.points ? `⭐ ${task.points}` : ''], by: d.done_by, undo: mine ? ['undo', task.id] : null };
+  });
+  const hw = (isParent() ? S.homework : []).filter((h) => h.done && h.done_at && localDay(h.done_at) >= since).map((h) => ({
+    day: localDay(h.done_at), at: h.done_at, icon: h.kind === 'husk' ? '🎒' : '📝', title: h.text,
+    meta: [h.child || '', h.subject || '', h.done_by ? memberName(h.done_by) : ''], by: h.done_by, undo: ['hwToggle', h.id] }));
+  return [...tasks, ...hw].sort((a, b) => b.day.localeCompare(a.day) || b.at.localeCompare(a.at));
+}
+
+// The small link that replaces the ticked rows on I dag, Opgaver and Huset
+function doneLink(nNow) {
+  return `<button class="small done-link" data-act="openDone">✓ ${esc(t('dn.title'))}${nNow ? ` (${nNow})` : ''} →</button>`;
+}
+
+function doneList() {
+  const items = doneItems();
+  if (!items.length) return `<p class="empty">${esc(t('dn.none'))}</p>`;
+  const counts = {};
+  items.forEach((x) => { if (x.by) counts[x.by] = (counts[x.by] || 0) + 1; });
+  const tally = Object.entries(counts).sort((a, b) => b[1] - a[1])
+    .map(([u, n]) => `<span class="chip yes">${esc(memberName(u))}: ${n}</span>`).join('');
+  const td = today();
+  const label = (dd) => dd === td ? t('td.today') : dd === addDays(td, -1) ? t('dn.yesterday') : `${weekdayName(dd)} ${fmtDate(dd, getLang())}`;
+  const days = [...new Set(items.map((x) => x.day))];
+  return `<p class="hint">${esc(t('dn.help'))}</p>
+    ${tally ? `<div class="tally">${tally}</div>` : ''}
+    ${days.map((dd) => `<h3 class="subhead">${esc(cap(label(dd)))}</h3>
+      <div class="list cols tight">${items.filter((x) => x.day === dd).map((x) => `<div class="row is-done">
+        <span class="cicon" aria-hidden="true">${x.icon}</span>
+        <div class="body"><div class="ttl one">${esc(x.title)}</div><div class="meta one">✓ ${esc(x.meta.filter(Boolean).join(' · '))}</div></div>
+        ${x.undo ? `<button class="small" data-act="${x.undo[0]}" data-id="${x.undo[1]}">${esc(t('undo'))}</button>` : ''}</div>`).join('')}</div>`).join('')}`;
+}
+
+function viewDone() {
+  const back = S.doneBack && S.doneBack !== 'done' ? S.doneBack : 'today';
+  return `<div class="toolbar"><button data-act="tab" data-id="${back}">‹ ${esc(t('tabs.' + back))}</button></div>${doneList()}`;
 }
 
 function viewTasks() {
@@ -1341,8 +1394,7 @@ function viewTasks() {
         || sortOf(S.chores, a.task.chore_id) - sortOf(S.chores, b.task.chore_id));
     if (zi.length) groups.push([`${ZONE_ICON[z]} ${zoneLabel(z)}`, zi]);
   });
-  const doneToday = S.tasks.map((task) => ({ task, st: taskState(task) }))
-    .filter(({ st }) => st.active && st.kind === 'open' && st.done);
+  const nDone = S.tasks.map((task) => ({ task, st: taskState(task) })).filter(({ task, st }) => st.active && st.kind === 'open' && st.done && !oldOnce(task, st)).length;
   return `
     <p class="hint">${esc(t('pk.help'))}</p>
     <div class="toolbar">
@@ -1352,15 +1404,13 @@ function viewTasks() {
     ${groups.length ? groups.map(([h, list]) => `<h2>${esc(h)} <small class="count">${list.length}</small></h2>
       <div class="list cols">${list.map(({ task, st }) => pickTile(task, st)).join('')}</div>`).join('')
       : `<p class="allgood">${esc(t('pk.none'))}</p>`}
-    ${doneToday.length ? `<details><summary>${esc(t('house.doneNow'))} (${doneToday.length})</summary>
-      <div class="list cols">${doneToday.map(({ task, st }) => `<div class="row ptile is-done"><span class="cicon big" aria-hidden="true">${taskIcon(task)}</span>
-        <div class="body"><div class="ttl one">${esc(taskTitle(task))}</div><div class="meta one">✓ ${esc(st.doneRows.map((d) => memberName(d.done_by)).join(', '))}</div></div></div>`).join('')}</div></details>` : ''}`;
+    <div class="acts">${doneLink(nDone)}</div>`;
 }
 
 // Hjem: who does what today (family tasks that are taken, given or done)
 function familyTodaySection() {
   const rows = S.tasks.map((task) => ({ task, st: taskState(task) }))
-    .filter(({ st }) => st.active && (st.takers.length || st.doneRows.length || st.kind === 'assigned'));
+    .filter(({ st }) => st.active && !st.done && (st.takers.length || st.doneRows.length || st.kind === 'assigned'));
   const free = S.tasks.map((task) => taskState(task)).filter((st) => st.active && st.kind === 'open' && !st.done && !st.full).length;
   if (!rows.length && !free) return '';
   const people = (task, st) => {
@@ -1725,7 +1775,7 @@ function houseTodo() {
   const byChore = (a, b) => sortOf(S.chores, a.task.chore_id) - sortOf(S.chores, b.task.chore_id);
   const mineNow = items.filter((x) => x.st.took && !x.st.done);
   const open = items.filter((x) => !x.st.took && !x.st.done);
-  const doneNow = items.filter((x) => x.st.done);
+  const doneNow = items.filter((x) => x.st.done && !oldOnce(x.task, x.st));
 
   // Daily chores have no room, so they are one card without a room heading
   const placeCards = (zone) => S.places.filter((p) => zoneOf(p) === zone).map((p) => {
@@ -1741,8 +1791,7 @@ function houseTodo() {
     ${mineNow.length ? `<h2>${esc(t('house.mineNow'))}</h2><div class="list cols">${withPlace(mineNow)}</div>` : ''}
     ${!sections.length ? `<p class="allgood">${esc(t('house.nothing'))}</p>` : ''}
     ${sections.map(([z, html]) => `<h2>${ZONE_ICON[z]} ${esc(zoneLabel(z))}</h2>${html}`).join('')}
-    ${doneNow.length ? `<details><summary>${esc(t('house.doneNow'))} (${doneNow.length})</summary>
-      <div class="list cols">${withPlace(doneNow)}</div></details>` : ''}`;
+    <div class="acts">${doneLink(doneNow.length)}</div>`;
 }
 
 function houseSetup() {
@@ -1790,25 +1839,7 @@ function houseSetup() {
   return `${pick}<p class="hint">${esc(t('house.setupHelp'))}</p>${section(zone)}`;
 }
 
-function houseLog() {
-  const ids = new Set(S.tasks.filter(isHouse).map((x) => x.id));
-  const since = isoMinus(30);
-  const rows = S.done.filter((d) => ids.has(d.task_id) && d.done_on >= since)
-    .sort((a, b) => b.done_on.localeCompare(a.done_on) || String(b.created_at).localeCompare(String(a.created_at)));
-  if (!rows.length) return `<p class="empty">${esc(t('house.noLog'))}</p>`;
-  const counts = {};
-  rows.forEach((d) => { counts[d.done_by] = (counts[d.done_by] || 0) + 1; });
-  const tally = Object.entries(counts).sort((a, b) => b[1] - a[1])
-    .map(([u, n]) => `<span class="chip yes">${esc(memberName(u))}: ${n}</span>`).join('');
-  return `
-    <h2>${esc(t('house.last30'))}</h2>
-    <div class="card"><div>${tally}</div></div>
-    <div class="list">${rows.map((d) => `
-      <div class="row"><div class="body">
-        <div class="ttl">${esc(taskTitle(byId(S.tasks, d.task_id)))}</div>
-        <div class="meta">${esc(fmtDate(d.done_on, getLang()))} · ${esc(memberName(d.done_by))}</div>
-      </div></div>`).join('')}</div>`;
-}
+function houseLog() { return doneList(); }
 
 // Set how often a chore is done in a room (or switch it off)
 function choreSetForm(placeId, choreId) {
@@ -2962,16 +2993,17 @@ function homeworkRow(h) {
 function homeworkList() {
   const t0 = today();
   const until = addDays(t0, 7);
-  const show = S.homework.filter((h) => (!h.due_date || (h.due_date >= t0 && h.due_date <= until)) && (!h.done || h.due_date === t0));
-  if (!show.length) return '';
+  const show = S.homework.filter((h) => (!h.due_date || (h.due_date >= t0 && h.due_date <= until)) && !h.done);
+  const nDoneNow = S.homework.filter((h) => h.done && h.done_at && localDay(h.done_at) === t0).length;
+  if (!show.length) return nDoneNow ? fold('hw', `📝 ${esc(t('hw.title'))}`, `<p class="allgood">${esc(t('dn.allDone'))}</p><div class="acts">${doneLink(nDoneNow)}</div>`, '') : '';
   const days = [...new Set(show.map((h) => h.due_date || ''))].sort((a, b) => (!a) - (!b) || a.localeCompare(b));
   const label = (dd) => !dd ? t('hw.noDay') : dd === t0 ? t('td.today') : dd === addDays(t0, 1) ? t('td.tomorrow')
     : `${weekdayName(dd)} ${fmtDate(dd, getLang())}`;
   const body = days.map((dd) => `<h3 class="subhead hw-day">${esc(label(dd))}</h3>
     <div class="list cols tight">${show.filter((h) => (h.due_date || '') === dd)
       .sort((a, b) => (a.child || '').localeCompare(b.child || '') || a.kind.localeCompare(b.kind)).map(homeworkRow).join('')}</div>`).join('')
-    + `<p class="hint hw-hint">${esc(t('hw.hint'))}</p>`;
-  return fold('hw', `📝 ${esc(t('hw.title'))}`, body, show.filter((h) => !h.done).length || '');
+    + `${nDoneNow ? `<div class="acts">${doneLink(nDoneNow)}</div>` : ''}<p class="hint hw-hint">${esc(t('hw.hint'))}</p>`;
+  return fold('hw', `📝 ${esc(t('hw.title'))}`, body, show.length);
 }
 
 function schoolWeekDialog(week) {
@@ -3226,6 +3258,7 @@ const byId = (list, id, key = 'id') => list.find((x) => x[key] === id);
 
 const ACTIONS = {
   tab: (id) => { S.tab = id; render(); window.scrollTo(0, 0); },
+  openDone: () => { if (S.tab !== 'done') S.doneBack = S.tab; S.tab = 'done'; render(); window.scrollTo(0, 0); },
   lang: (id) => {
     store('hl-lang', id); setLang(id); render();
     if (S.pushOn) subscribePush().catch(() => {}); // notifications follow the language
@@ -3259,7 +3292,7 @@ const ACTIONS = {
     const task = byId(S.tasks, id); const st = taskState(task);
     if (st.kind === 'open' && !st.took) return toast(t('takeFirst'), true);
     await run(sb.from('task_done').insert({ task_id: id, period: st.period, done_on: today() }));
-    toast(task.points ? `+${task.points} ⭐` : '✓'); await refresh();
+    toast(`${task.points ? `+${task.points} ⭐ · ` : '✓ '}${t('dn.moved')}`); await refresh();
   },
   undo: async (id) => {
     const task = byId(S.tasks, id);
@@ -3523,9 +3556,12 @@ const ACTIONS = {
   hwToggle: async (id) => {
     const h = byId(S.homework, id);
     if (!h) return;
-    h.done = !h.done; render();
+    const was = { done: h.done, done_at: h.done_at, done_by: h.done_by };
+    Object.assign(h, { done: !h.done, done_at: h.done ? null : new Date().toISOString(), done_by: h.done ? null : uid() });
+    if (h.done) toast(`✓ ${t('dn.moved')}`);
+    render();
     try { await run(sb.rpc('school_homework_done', { p_id: id, p_done: h.done })); }
-    catch { h.done = !h.done; render(); }
+    catch { Object.assign(h, was); render(); }
   },
   scNote: (id) => { const n = byId(S.schoolItems, id); if (n) schoolNoteDialog(n); },
   openPrices: () => { S.tab = 'prices'; render(); window.scrollTo(0, 0); },

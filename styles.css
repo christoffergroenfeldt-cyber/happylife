@@ -690,3 +690,6 @@ a.row.school-item { text-decoration: none; color: inherit; }
 button.row.school-item { width: 100%; text-align: left; background: none; border: 0; font: inherit; color: inherit; cursor: pointer; align-items: center; }
 .school-item .body { display: flex; flex-direction: column; min-width: 0; }
 .school-item .preview { font-size: .85em; opacity: .7; margin-top: 2px; }
+.tally { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
+.acts .done-link { color: var(--muted); }
+.row.is-done .cicon { opacity: .7; }
