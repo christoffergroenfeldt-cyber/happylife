@@ -13,7 +13,7 @@ const ROLES = ['child', 'mother', 'father', 'husband', 'wife'];
 const ITEM_ROLES = ['all', ...ROLES];
 const PARENT = ['mother', 'father'];
 const HOUSE_ROLES = ['child', 'mother', 'father']; // who sees house chores
-const APP_VERSION = '53'; // keep in step with CACHE in sw.js
+const APP_VERSION = '54'; // keep in step with CACHE in sw.js
 
 // Get the newest version: update the service worker, drop cached files, reload
 async function hardRefresh() {
@@ -752,7 +752,7 @@ function viewToday() {
     ${fdRow ? `<div class="list tight fd-today"><div class="row dayev" data-act="fdPick" data-id="${fdRow.week_start}"><div class="when time">${fdRow.at_time ? `<b>${esc(fdRow.at_time)}</b>` : `<small>${esc(t('td.allDay'))}</small>`}</div>
       <div class="body"><div class="ttl one">${esc(fdRow.emoji || '🎉')} ${esc(t('fd.title'))}: ${esc(fdRow.title)}</div><div class="meta one">${esc(t('fd.chosenBy', { name: personLabel(fdRow.chooser) }))}</div></div></div></div>` : ''}
     ${program.length ? `<div class="list cols tight">${program.map((ev) => dayEventRow(ev, d, false)).join('')}</div>` : fdRow ? '' : `<p class="empty">${esc(t('td.noProgram'))}</p>`}
-    ${fdRow ? '' : famdayCard(true)}`;
+`;
 
   // 3. Snart: one list for the next 30 days, filtered by who it's about or by calendar
   const all = comingUp(d, () => true);
@@ -778,14 +778,15 @@ function viewToday() {
   // Øjeblikke has its own page, so it is not repeated here
   const anyTags = S.events.some((ev) => (ev.people || []).length);
   return `<div class="today-page">${head}
+    ${bag}
     ${parent ? homeworkList() : ''}
     ${parent ? schoolLatest() : ''}
     ${tasksBlock}
-    ${bag}
     <h2>📅 ${esc(t(isToday ? 'td.program' : 'td.programTomorrow'))}</h2>${day}
     ${parent ? schoolDay(d) : ''}
     ${isToday ? fold('who', `👨‍👩‍👧‍👦 ${esc(t('pk.whoWhat'))}`, familyTodaySection()) : ''}
     ${fold('snart', `🗓️ ${esc(t('upcoming'))}`, snart, all.length)}
+    ${fdRow ? '' : famdayCard(true)}
     ${pricesTeaser()}
     ${parent && !anyTags ? `<p class="hint">💡 ${esc(t('td.tagHint'))}</p>` : ''}</div>`;
 }
